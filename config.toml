@@ -1,0 +1,2 @@
+[camera]
+device = "/dev/video0"
