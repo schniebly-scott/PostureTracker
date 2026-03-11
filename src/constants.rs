@@ -56,3 +56,4 @@ pub const INF_WIDTH: usize = 640;
 pub const INF_HEIGHT: usize = 640;
 pub const CONFIDENCE_THRESHOLD: f32 = 0.05;
 pub const KEEP_KEYPOINTS: [usize; 3] = [0, 5, 6];
+pub static MODEL_BYTES: &[u8] = include_bytes!("../yolov8n-pose.onnx");

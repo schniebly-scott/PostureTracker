@@ -16,7 +16,7 @@ pub struct Model {
 impl Model {
     pub fn new() -> ort::Result<Self> {
         let session = Session::builder()?
-            .commit_from_file(crate::constants::MODEL_PATH)?;
+            .commit_from_memory(crate::constants::MODEL_BYTES)?;
 
         let task: Box<PoseTask> = Box::new(PoseTask::new());
 

@@ -1,4 +1,5 @@
 mod subscriptions;
+mod theme;
 
 use std::time::Duration;
 
@@ -191,6 +192,6 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        Theme::Dark
+        theme::custom_theme()
     }
 }
