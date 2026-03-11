@@ -1,10 +1,11 @@
 mod subscriptions;
 mod theme;
+mod components;
 
 use std::time::Duration;
 
-use iced::widget::{column, row, button, container, image, stack, text};
-use iced::{Alignment, Element, Fill, Font, Subscription, Theme};
+use iced::widget::{column, row, image};
+use iced::{Element, Subscription, Theme};
 use crate::{Frame, Inference};
 use crate::utils::ManagedService;
 
@@ -92,96 +93,18 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let img: Element<_> = match (&self.cam_frame, &self.cv_frame) {
-            (Some(cam), Some(cv)) => {
-                stack![
-                    image(cam.clone()).width(Fill).height(Fill),
-                    image(cv.clone()).width(Fill).height(Fill),
-                ]
-                .into()
-            }
-            (Some(cam), None) => {
-                image(cam.clone())
-                    .width(Fill)
-                    .height(Fill)
-                    .into()
-            }
-            _ => container("-------- Camera not started --------").into(),
-        };
-
-        let load_button = match self.inference_state {
-            InferenceState::Running => {
-                button("Load Model")
-            }
-            InferenceState::Stopped | InferenceState::Unloaded => {
-                button("Load Model")
-                    .on_press(Message::LoadModelPressed)
-            }
-        };
-
-        let control_button = match self.inference_state {
-            InferenceState::Running => {
-                button("Stop Model")
-                    .on_press(Message::StopInferencePressed)
-            } 
-            InferenceState::Stopped => {
-                button("Start Model")
-                    .on_press(Message::StartInferencePressed)
-            }
-            InferenceState::Unloaded => {
-                button("Start Model")
-            }
-        };
-
-        let model_load_label = row![
-            text("Model Load Time: ")
-            .font(Font {
-                weight: iced::font::Weight::Bold,
-                ..Font::DEFAULT
-            }).size(16),
-            text(
-                self.model_load_time
-                    .map(|t| format!("{:?}", t))
-                    .unwrap_or_else(|| "Not loaded".to_string())
-            )
-            .size(16)
-        ].spacing(5);
-
-        let inference_time_label = row![
-            text("Inference Time: ")
-            .font(Font {
-                weight: iced::font::Weight::Bold,
-                ..Font::DEFAULT
-            }).size(16),
-            text(
-                self.inference_time
-                    .map(|t| format!("{:?}", t))
-                    .unwrap_or_else(|| "Not inference yet".to_string())
-            )
-            .size(16)
-        ].spacing(5);
-
-        let content = column![
-            img,
-            row![
-                load_button,
-                control_button
-            ].spacing(40),
-            row![
-                model_load_label,
-                inference_time_label
-            ].spacing(40)
+        row![
+            components::camera_panel::view(self),
+            column![
+                components::control_panel::view(self),
+                components::metrics_panel::view(self),
+            ]
+            .spacing(20)
+            .width(iced::Length::FillPortion(1))
         ]
         .spacing(20)
         .padding(20)
-        .align_x(Alignment::Center);
-
-        container(content)
-            .width(Fill)
-            .height(Fill)
-            .center_x(Fill)
-            .center_y(Fill)
-            .into()
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {

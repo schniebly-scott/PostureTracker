@@ -51,7 +51,6 @@ pub const SKELETON: &[(usize, usize)] = &[
 
 pub const KPT_START: usize = 5; 
 
-pub const MODEL_PATH: &str = "yolov8n-pose.onnx";
 pub const INF_WIDTH: usize = 640;
 pub const INF_HEIGHT: usize = 640;
 pub const CONFIDENCE_THRESHOLD: f32 = 0.05;

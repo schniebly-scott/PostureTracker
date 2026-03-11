@@ -6,7 +6,7 @@ pub fn custom_theme() -> Theme {
     Theme::custom("custom", Palette {
         background: DARK_BLUE,
         text: OWHITE,
-        primary: LIGHT_BLUE,
+        primary: MID_BLUE,
         success: LIGHT_BLUE,
         danger: OBROWN,
         warning: WARNING_RED,
