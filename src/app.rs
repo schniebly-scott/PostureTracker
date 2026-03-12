@@ -4,8 +4,9 @@ mod components;
 
 use std::time::Duration;
 
+use iced::advanced::graphics::core::window;
 use iced::widget::{column, row, image};
-use iced::{Element, Subscription, Theme};
+use iced::{Element, Size, Subscription, Theme};
 use crate::{Frame, Inference};
 use crate::utils::ManagedService;
 
@@ -23,6 +24,14 @@ pub fn run() -> iced::Result {
         )
         .subscription(App::subscription)
         .theme(App::theme)
+        .window(window::Settings {
+            size: Size::new(720.0, 480.0),
+            resizable: false,
+            minimizable: false,
+            level: window::Level::AlwaysOnTop,
+            position: window::Position::Centered,
+            ..Default::default()
+        })
         .run()
 }
 
@@ -93,17 +102,17 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        row![
-            components::camera_panel::view(self),
-            column![
-                components::control_panel::view(self),
-                components::metrics_panel::view(self),
-            ]
-            .spacing(20)
-            .width(iced::Length::FillPortion(1))
+        column![
+            row![
+                components::camera_panel::view(self),
+                column![
+                    components::control_panel::view(self),
+                    components::metrics_panel::view(self),
+                ]
+                .width(iced::Length::FillPortion(1))
+            ],
+            components::status_panel::view(self)
         ]
-        .spacing(20)
-        .padding(20)
         .into()
     }
 

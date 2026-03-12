@@ -1,6 +1,8 @@
+use iced::Background;
 use iced::{Element, Length::Fill};
 use iced::widget::{container, image, stack};
 
+use crate::app::theme::OBROWN;
 use crate::app::{App, Message};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -23,6 +25,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
 
     container(img)
-        .width(iced::Length::FillPortion(3))
+        .style(|_| container::Style {
+            background: Some(Background::Color(OBROWN)),
+            ..Default::default()
+        })
+        .width(iced::Length::FillPortion(2))
         .into()
 }

@@ -1,7 +1,6 @@
-use std::error::Error;
+use std::{error::Error, time::Instant};
 
-use image::{DynamicImage, ImageBuffer, Rgba};
-use ort::{inputs, session::Session, value::TensorRef};
+use ort::{inputs, session::{Session, builder::GraphOptimizationLevel}, value::TensorRef};
 
 use crate::{cv::pose::PoseTask};
 
@@ -16,6 +15,7 @@ pub struct Model {
 impl Model {
     pub fn new() -> ort::Result<Self> {
         let session = Session::builder()?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_memory(crate::constants::MODEL_BYTES)?;
 
         let task: Box<PoseTask> = Box::new(PoseTask::new());
@@ -37,24 +37,23 @@ impl Model {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, Box<dyn Error>> {
-        let img = wrap_rgba(rgba, width, height);
+        let t0 = Instant::now();
+        let input = self.task.preprocess_rgba(rgba, width, height);
+        println!("preprocess: {:?}", t0.elapsed());
 
-        let input = self.task.preprocess(&img);
-
+        let t1 = Instant::now();
         let outputs = self.session.run(
             inputs![&self.input_name => TensorRef::from_array_view(&input)?]
         )?;
+        println!("inference: {:?}", t1.elapsed());
 
+        let t2 = Instant::now();
         let result = self.task.postprocess(&outputs, &self.output_name, width, height)?;
+        println!("postprocess: {:?}", t2.elapsed());
 
-        Ok(self.task.render(&result, width, height))
+        let t3 = Instant::now();
+        let img = self.task.render(&result, width, height);
+        println!("render: {:?}", t3.elapsed());
+        Ok(img)
     }
-}
-
-fn wrap_rgba(rgba: &[u8], width: u32, height: u32) -> DynamicImage {
-    let img = DynamicImage::ImageRgba8(
-        ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba.to_vec())
-            .expect("Invalid RGBA buffer"),
-    );
-    img
 }

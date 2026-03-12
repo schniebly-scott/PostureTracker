@@ -1,6 +1,7 @@
-use iced::{Element};
-use iced::widget::{column, row, button, text, container};
+use iced::{Background, Element};
+use iced::widget::{column, button, text, container};
 
+use crate::app::theme::{DARK_BLUE};
 use crate::app::{App, Message, InferenceState};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -25,10 +26,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
     container(
         column![
             text("Model Controls").size(20),
-            row![load_button, control_button].spacing(10),
+            load_button,
+            control_button
         ]
         .spacing(10)
     )
+    .style(|_| container::Style {
+        background: Some(Background::Color(DARK_BLUE)),
+        ..Default::default()
+    })
     .padding(15)
     .into()
 }

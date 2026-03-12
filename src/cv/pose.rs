@@ -1,15 +1,11 @@
 use std::{error::Error, fmt::Debug};
-use ndarray::Array4;
-use image::DynamicImage;
-
+use ndarray::{Array4, ArrayView3};
 use crate::constants::{KPT_START, SKELETON, INF_HEIGHT, INF_WIDTH, CONFIDENCE_THRESHOLD, KEEP_KEYPOINTS};
 
 use raqote::{
     DrawOptions, DrawTarget, LineJoin, PathBuilder,
     SolidSource, Source, StrokeStyle,
 };
-use image::imageops::FilterType;
-
 pub type Keypoints = [Option<(f32, f32, f32)>; 17];
 
 #[derive(Debug)]
@@ -31,7 +27,7 @@ impl PoseTask {
 
     fn decode_yolo_pose(
         &self,
-        preds: &ndarray::Array3<f32>,
+        preds: ArrayView3<f32>,
         orig_w: u32,
         orig_h: u32,
     ) -> Result<Keypoints, Box<dyn Error>> {
@@ -135,22 +131,42 @@ impl PoseTask {
         }
     }
 
-    pub fn preprocess(&self, img: &DynamicImage) -> Array4<f32> {
-        let resized = img
-            .resize_exact(self.inf_width as u32, self.inf_height as u32, FilterType::CatmullRom)
-            .to_rgb8();
+    pub fn preprocess_rgba(
+        &self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Array4<f32> {
 
-        let raw = resized.as_raw();
-        let mut input = Array4::<f32>::zeros((1, 3, self.inf_height, self.inf_width));
+        let w = self.inf_width;
+        let h = self.inf_height;
+
+        let mut input = Array4::<f32>::zeros((1, 3, h, w));
         let out = input.as_slice_mut().unwrap();
 
-        let hw = self.inf_height * self.inf_width;
+        let hw = h * w;
         let scale = 1.0 / 255.0;
 
-        for i in 0..hw {
-            out[i] = raw[i * 3] as f32 * scale;
-            out[hw + i] = raw[i * 3 + 1] as f32 * scale;
-            out[2 * hw + i] = raw[i * 3 + 2] as f32 * scale;
+        let x_ratio = width as f32 / w as f32;
+        let y_ratio = height as f32 / h as f32;
+
+        for y in 0..h {
+            let src_y = (y as f32 * y_ratio) as usize;
+
+            for x in 0..w {
+                let src_x = (x as f32 * x_ratio) as usize;
+
+                let src_i = ((src_y * width as usize + src_x) * 4) as usize;
+                let dst_i = y * w + x;
+
+                let r = rgba[src_i];
+                let g = rgba[src_i + 1];
+                let b = rgba[src_i + 2];
+
+                out[dst_i] = r as f32 * scale;
+                out[hw + dst_i] = g as f32 * scale;
+                out[2 * hw + dst_i] = b as f32 * scale;
+            }
         }
 
         input
@@ -167,12 +183,10 @@ impl PoseTask {
             .get(output_name)
             .ok_or("Missing output tensor")?;
 
-        let array = tensor
-            .try_extract_array::<f32>()?
-            .into_owned();
+        let array = tensor.try_extract_array::<f32>()?;
 
-        let preds = array.into_dimensionality::<ndarray::Ix3>()?;
-        let keypoints = self.decode_yolo_pose(&preds, orig_w, orig_h)?;
+        let preds = array.view().into_dimensionality::<ndarray::Ix3>()?;
+        let keypoints = self.decode_yolo_pose(preds, orig_w, orig_h)?;
         Ok(keypoints)
     }
 
