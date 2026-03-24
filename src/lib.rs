@@ -8,7 +8,7 @@ pub mod constants;
 use std::sync::{Arc, Mutex};
 
 use camera::{CameraManager, Frame};
-use cv::{CVManager, Inference};
+use cv::CVManager;
 use config::Config;
 
 pub use app::run;

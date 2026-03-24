@@ -89,6 +89,34 @@ impl PoseTask {
         out
     }
 
+    pub fn posture_angle_deg(&self, keypoints: &Keypoints) -> Option<f32> {
+        let (nose_x, nose_y, nose_conf) = keypoints[0]?;
+        let (left_x, left_y, left_conf) = keypoints[5]?;
+        let (right_x, right_y, right_conf) = keypoints[6]?;
+
+        if nose_conf < self.confidence_threshold
+            || left_conf < self.confidence_threshold
+            || right_conf < self.confidence_threshold
+        {
+            return None;
+        }
+
+        let left = (left_x - nose_x, left_y - nose_y);
+        let right = (right_x - nose_x, right_y - nose_y);
+
+        let left_mag = (left.0 * left.0 + left.1 * left.1).sqrt();
+        let right_mag = (right.0 * right.0 + right.1 * right.1).sqrt();
+
+        if left_mag <= f32::EPSILON || right_mag <= f32::EPSILON {
+            return None;
+        }
+
+        let cos_theta = ((left.0 * right.0) + (left.1 * right.1)) / (left_mag * right_mag);
+        let clamped = cos_theta.clamp(-1.0, 1.0);
+
+        Some(clamped.acos().to_degrees())
+    }
+
     fn draw_skeleton(&self, dt: &mut DrawTarget, keypoints: &Keypoints) {
         for &(i, j) in SKELETON {
             if let (Some((x1, y1, c1)), Some((x2, y2, c2))) =

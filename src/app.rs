@@ -7,8 +7,9 @@ use std::time::Duration;
 use iced::advanced::graphics::core::window;
 use iced::widget::{column, row, image};
 use iced::{Element, Size, Subscription, Theme};
-use crate::{Frame, Inference};
 use crate::utils::ManagedService;
+
+const DEFAULT_POSTURE_THRESHOLD_DEG: f32 = 12.0;
 
 enum InferenceState {
     Unloaded,
@@ -43,6 +44,10 @@ pub struct App {
     
     model_load_time: Option<Duration>,
     inference_time: Option<Duration>,
+    posture_angle_deg: Option<f32>,
+    posture_baseline_deg: Option<f32>,
+    posture_threshold_deg: f32,
+    bad_posture: bool,
 
     inference_state: InferenceState,
 }
@@ -50,10 +55,11 @@ pub struct App {
 #[derive(Debug, Clone)]
 pub enum Message {
     CamFrame(image::Handle),
-    CvInference((image::Handle, Duration)),
+    CvInference((image::Handle, Duration, Option<f32>)),
     LoadModelPressed,
     StartInferencePressed,
     StopInferencePressed,
+    PostureThresholdChanged(f32),
 }
 
 impl App {
@@ -64,6 +70,10 @@ impl App {
             cv_frame: None,
             model_load_time: None,
             inference_time: None,
+            posture_angle_deg: None,
+            posture_baseline_deg: None,
+            posture_threshold_deg: DEFAULT_POSTURE_THRESHOLD_DEG,
+            bad_posture: false,
             inference_state: InferenceState::Unloaded,
         }
     }
@@ -73,9 +83,21 @@ impl App {
             Message::CamFrame(frame) => {
                 self.cam_frame = Some(frame);
             }
-            Message::CvInference((frame, inf_time)) => {
+            Message::CvInference((frame, inf_time, posture_angle_deg)) => {
                 self.cv_frame = Some(frame);
                 self.inference_time = Some(inf_time);
+                self.posture_angle_deg = posture_angle_deg;
+
+                if self.posture_baseline_deg.is_none() {
+                    self.posture_baseline_deg = posture_angle_deg;
+                }
+
+                self.bad_posture = match (self.posture_baseline_deg, posture_angle_deg) {
+                    (Some(baseline), Some(current)) => {
+                        (current - baseline).abs() >= self.posture_threshold_deg
+                    }
+                    _ => false,
+                };
             }
             Message::LoadModelPressed => {
                 match self.pipelines.cv_manager.load_model() {
@@ -91,12 +113,25 @@ impl App {
             Message::StartInferencePressed => {
                 self.pipelines.camera_manager.start().expect("Unable to start camera");
                 self.pipelines.cv_manager.start().expect("Unable to start model");
+                self.posture_angle_deg = None;
+                self.posture_baseline_deg = None;
+                self.bad_posture = false;
                 self.inference_state = InferenceState::Running;
             }
             Message::StopInferencePressed => {
                 self.pipelines.camera_manager.stop();
                 self.pipelines.cv_manager.stop();
+                self.bad_posture = false;
                 self.inference_state = InferenceState::Stopped;
+            }
+            Message::PostureThresholdChanged(threshold_deg) => {
+                self.posture_threshold_deg = threshold_deg;
+                self.bad_posture = match (self.posture_baseline_deg, self.posture_angle_deg) {
+                    (Some(baseline), Some(current)) => {
+                        (current - baseline).abs() >= self.posture_threshold_deg
+                    }
+                    _ => false,
+                };
             }
         }
     }

@@ -22,6 +22,7 @@ pub struct CameraWorker {
 impl CameraWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
         let mut camera = Provider::with_device_name(&self.config.device)?;
+        camera.set_pixel_format(ccap::PixelFormat::Yuyv)?; // Prevents auto-conversion from unknown formats
         camera.set_pixel_format(ccap::PixelFormat::Rgba32)?;
 
         let width = camera.get_property(PropertyName::Width)? as u32;

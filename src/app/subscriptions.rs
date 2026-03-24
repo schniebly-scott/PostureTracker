@@ -10,8 +10,8 @@ use tokio::sync::broadcast;
 
 use crate::{camera::CameraManager, cv::CVManager};
 use crate::utils::ManagedService;
-
-use super::{Frame, Inference};
+use crate::Frame;
+use crate::cv::Inference;
 
 /* ============================
    Camera Subscription
@@ -59,7 +59,7 @@ impl iced_subscription::Recipe for CameraSubscription {
    CV Subscription
    ============================ */
 
-pub fn inference_subscription(cv_manager: Arc<CVManager>) -> Subscription<(image::Handle, Duration)> {
+pub fn inference_subscription(cv_manager: Arc<CVManager>) -> Subscription<(image::Handle, Duration, Option<f32>)> {
     let rx = cv_manager.subscribe();
     iced_subscription::from_recipe(CVSubscription::new(rx))
 }
@@ -75,7 +75,7 @@ impl CVSubscription {
 }
 
 impl iced_subscription::Recipe for CVSubscription {
-    type Output = (image::Handle, Duration);
+    type Output = (image::Handle, Duration, Option<f32>);
     //TODO: make the output inferred from Inference type but still transform frame to handle
 
     fn hash(&self, state: &mut Hasher) {
@@ -92,7 +92,11 @@ impl iced_subscription::Recipe for CVSubscription {
         let s = async_stream::stream! {
             while let Ok(inference) = rx.recv().await {
                 let frame = inference.frame;
-                yield (image::Handle::from_rgba(frame.0, frame.1, frame.2.data.clone()), inference.inf_time);
+                yield (
+                    image::Handle::from_rgba(frame.0, frame.1, frame.2.data.clone()),
+                    inference.inf_time,
+                    inference.posture_angle_deg,
+                );
             }
         };
         Box::pin(s)

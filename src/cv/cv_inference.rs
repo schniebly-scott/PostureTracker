@@ -36,7 +36,7 @@ impl Model {
         rgba: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    ) -> Result<(Vec<u8>, Option<f32>), Box<dyn Error>> {
         let t0 = Instant::now();
         let input = self.task.preprocess_rgba(rgba, width, height);
         println!("preprocess: {:?}", t0.elapsed());
@@ -54,6 +54,7 @@ impl Model {
         let t3 = Instant::now();
         let img = self.task.render(&result, width, height);
         println!("render: {:?}", t3.elapsed());
-        Ok(img)
+        let posture_angle_deg = self.task.posture_angle_deg(&result);
+        Ok((img, posture_angle_deg))
     }
 }

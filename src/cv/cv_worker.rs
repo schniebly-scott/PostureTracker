@@ -42,7 +42,7 @@ impl CVWorker {
 
                     // ---------- Inference ----------
                     let now = Instant::now();
-                    let output = match model.process_rgba(&rgba, width, height) {
+                    let (output, posture_angle_deg) = match model.process_rgba(&rgba, width, height) {
                         Ok(o) => o,
                         Err(e) => {
                             eprintln!("Inference error: {e}");
@@ -57,7 +57,11 @@ impl CVWorker {
                         pool: pool.clone(),
                     };
 
-                    let _ = self.core.tx.send(Inference { frame: (width, height, Arc::new(buf)), inf_time: elapsed });
+                    let _ = self.core.tx.send(Inference {
+                        frame: (width, height, Arc::new(buf)),
+                        inf_time: elapsed,
+                        posture_angle_deg,
+                    });
                 } else {
                     //No frame available, yield CPU
                     std::thread::sleep(Duration::from_millis(5));
