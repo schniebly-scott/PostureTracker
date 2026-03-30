@@ -165,17 +165,20 @@ impl App {
 
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if window_id == self.main_window_id {
-            column![row![
-                components::camera_panel::view(self),
-                column![
-                    components::control_panel::view(self),
-                    components::metrics_panel::view(self),
-                ]
-                .width(iced::Length::FillPortion(1))
-            ],]
+            column![
+                row![
+                    components::camera_panel::view(self),
+                    column![
+                        components::control_panel::view(self),
+                        components::metrics_panel::view(self),
+                    ]
+                    .width(iced::Length::FillPortion(1))
+                ],
+                components::status_panel::view(self)
+            ]
             .into()
         } else if self.debug_window_id == Some(window_id) {
-            components::status_panel::view(self)
+            components::debug_stats::view(self)
         } else {
             iced::widget::text("Unknown window").into()
         }
