@@ -1,12 +1,12 @@
 use std::sync::atomic::Ordering;
-use std::time::Duration;
-use std::{time::Instant, error::Error};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::{error::Error, time::Instant};
 
+use super::{Inference, cv_inference::Model};
 use crate::SharedFrame;
 use crate::cv::cv_worker::CVWorker;
 use crate::utils::{ManagedService, ServiceCore};
-use super::{Inference, cv_inference::Model};
 
 #[derive(Debug)]
 pub struct CVManager {

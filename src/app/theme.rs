@@ -1,16 +1,19 @@
 use iced::Color;
+use iced::Theme;
 use iced::theme::Palette;
-use iced::{Theme};
 
 pub fn custom_theme() -> Theme {
-    Theme::custom("custom", Palette {
-        background: DARK_BLUE,
-        text: OWHITE,
-        primary: MID_BLUE,
-        success: LIGHT_BLUE,
-        danger: OBROWN,
-        warning: WARNING_RED,
-    })
+    Theme::custom(
+        "custom",
+        Palette {
+            background: DARK_BLUE,
+            text: OWHITE,
+            primary: MID_BLUE,
+            success: LIGHT_BLUE,
+            danger: OBROWN,
+            warning: WARNING_RED,
+        },
+    )
 }
 
 pub const OWHITE: Color = Color::from_rgb(

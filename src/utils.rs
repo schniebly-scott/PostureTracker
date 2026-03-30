@@ -1,4 +1,10 @@
-use std::{error::Error, sync::{Arc, atomic::{AtomicBool, Ordering}}};
+use std::{
+    error::Error,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tokio::sync::broadcast;
 
 pub trait ManagedService {

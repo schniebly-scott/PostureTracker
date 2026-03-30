@@ -1,12 +1,12 @@
-use std::sync::atomic::Ordering;
 use std::error::Error;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::SharedFrame;
 use crate::config::CameraConfig;
 use crate::utils::{ManagedService, ServiceCore};
 
-use super::{ Frame, cam_worker::CameraWorker };
+use super::{Frame, cam_worker::CameraWorker};
 
 #[derive(Debug)]
 pub struct RgbaBuffer {
@@ -33,9 +33,9 @@ impl CameraManager {
         Self {
             config,
             shared,
-            core: ServiceCore::new(2)
+            core: ServiceCore::new(2),
         }
-    } 
+    }
 }
 
 impl ManagedService for CameraManager {

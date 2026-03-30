@@ -1,17 +1,17 @@
 use std::sync::atomic::Ordering;
-use std::time::Duration;
-use std::{thread, time::Instant, error::Error};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::{error::Error, thread, time::Instant};
 
-use crate::camera::RgbaBuffer;
-use crate::SharedFrame;
-use crate::utils::ServiceCore;
 use super::{Inference, cv_inference::Model};
+use crate::SharedFrame;
+use crate::camera::RgbaBuffer;
+use crate::utils::ServiceCore;
 
 pub struct CVWorker {
     pub model: Arc<Mutex<Option<Model>>>,
     pub shared: SharedFrame,
-    pub core: ServiceCore<Inference>
+    pub core: ServiceCore<Inference>,
 }
 
 impl CVWorker {
@@ -42,7 +42,8 @@ impl CVWorker {
 
                     // ---------- Inference ----------
                     let now = Instant::now();
-                    let (output, posture_angle_deg) = match model.process_rgba(&rgba, width, height) {
+                    let (output, posture_angle_deg) = match model.process_rgba(&rgba, width, height)
+                    {
                         Ok(o) => o,
                         Err(e) => {
                             eprintln!("Inference error: {e}");
@@ -70,5 +71,5 @@ impl CVWorker {
         });
 
         Ok(())
-    } 
+    }
 }

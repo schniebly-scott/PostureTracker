@@ -1,21 +1,21 @@
 use std::{sync::Arc, time::Duration};
 
+use iced::Subscription;
+use iced::advanced::subscription as iced_subscription;
 use iced::advanced::subscription::Hasher;
 use iced::futures::stream;
-use iced::advanced::subscription as iced_subscription;
 use iced::widget::image;
-use iced::Subscription;
 
 use tokio::sync::broadcast;
 
-use crate::{camera::CameraManager, cv::CVManager};
-use crate::utils::ManagedService;
 use crate::Frame;
 use crate::cv::Inference;
+use crate::utils::ManagedService;
+use crate::{camera::CameraManager, cv::CVManager};
 
 /* ============================
-   Camera Subscription
-   ============================ */
+Camera Subscription
+============================ */
 
 pub fn raw_frame_subscription(camera_manager: Arc<CameraManager>) -> Subscription<image::Handle> {
     let rx = camera_manager.subscribe();
@@ -56,10 +56,12 @@ impl iced_subscription::Recipe for CameraSubscription {
 }
 
 /* ============================
-   CV Subscription
-   ============================ */
+CV Subscription
+============================ */
 
-pub fn inference_subscription(cv_manager: Arc<CVManager>) -> Subscription<(image::Handle, Duration, Option<f32>)> {
+pub fn inference_subscription(
+    cv_manager: Arc<CVManager>,
+) -> Subscription<(image::Handle, Duration, Option<f32>)> {
     let rx = cv_manager.subscribe();
     iced_subscription::from_recipe(CVSubscription::new(rx))
 }

@@ -1,6 +1,6 @@
 use iced::Background;
-use iced::{Element, Length::Fill};
 use iced::widget::{container, image, stack};
+use iced::{Element, Length::Fill};
 
 use crate::app::theme::OBROWN;
 use crate::app::{App, Message};
@@ -13,10 +13,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         ]
         .into(),
 
-        (Some(cam), None) => image(cam.clone())
-            .width(Fill)
-            .height(Fill)
-            .into(),
+        (Some(cam), None) => image(cam.clone()).width(Fill).height(Fill).into(),
 
         _ => container("Camera not started")
             .center_x(Fill)

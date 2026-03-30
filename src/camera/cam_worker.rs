@@ -1,10 +1,10 @@
 use ccap::{PropertyName, Provider};
 
+use std::error::Error;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::error::Error;
-use std::sync::{Arc, Mutex};
 
 use crate::SharedFrame;
 use crate::camera::RgbaBuffer;
@@ -52,8 +52,7 @@ impl CameraWorker {
                             pool: pool.clone(),
                         };
 
-                        let captured_frame: Frame =
-                            (width, height, Arc::new(buf));
+                        let captured_frame: Frame = (width, height, Arc::new(buf));
 
                         let mut slot = self.shared.lock().unwrap();
                         *slot = Some(captured_frame.clone());

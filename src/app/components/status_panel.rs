@@ -30,34 +30,38 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let slider_row = row![
         text("Angle Threshold"),
-        slider(1.0..=45.0, app.posture_threshold_deg, Message::PostureThresholdChanged)
-            .step(0.5)
-            .width(iced::Length::Fill),
+        slider(
+            1.0..=45.0,
+            app.posture_threshold_deg,
+            Message::PostureThresholdChanged
+        )
+        .step(0.5)
+        .width(iced::Length::Fill),
         text(format!("{:.1} deg", app.posture_threshold_deg)),
     ]
     .spacing(12)
     .align_y(iced::Alignment::Center);
 
-    container(
-        column![
-            text("Posture Status").size(20),
-            row![text("State:"), text(posture_state)].spacing(10),
-            row![text("Current Angle:"), text(current_angle)].spacing(10),
-            row![text("Baseline Angle:"), text(baseline_angle)].spacing(10),
-            row![text("Angle Delta:"), text(delta_angle)].spacing(10),
-            slider_row,
-        ]
-        .spacing(10),
-    )
-    .style(move |_| container::Style {
-        background: Some(Background::Color(if app.bad_posture {
-            WARNING_RED
-        } else {
-            DARK_BLUE
-        })),
-        ..Default::default()
-    })
-    .padding(15)
-    .width(iced::Length::Fill)
-    .into()
+    let debug_stats = column![
+        row![text("State:"), text(posture_state)].spacing(10),
+        row![text("Current Angle:"), text(current_angle)].spacing(10),
+        row![text("Baseline Angle:"), text(baseline_angle)].spacing(10),
+        row![text("Angle Delta:"), text(delta_angle)].spacing(10),
+        slider_row,
+    ]
+    .spacing(10);
+
+    container(column![text("Debug Stats").size(20), debug_stats,].spacing(10))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(if app.bad_posture {
+                WARNING_RED
+            } else {
+                DARK_BLUE
+            })),
+            ..Default::default()
+        })
+        .padding(15)
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
+        .into()
 }

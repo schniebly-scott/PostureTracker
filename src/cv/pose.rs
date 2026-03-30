@@ -1,11 +1,10 @@
-use std::{error::Error, fmt::Debug};
-use ndarray::{Array4, ArrayView3};
-use crate::constants::{KPT_START, SKELETON, INF_HEIGHT, INF_WIDTH, CONFIDENCE_THRESHOLD, KEEP_KEYPOINTS};
-
-use raqote::{
-    DrawOptions, DrawTarget, LineJoin, PathBuilder,
-    SolidSource, Source, StrokeStyle,
+use crate::constants::{
+    CONFIDENCE_THRESHOLD, INF_HEIGHT, INF_WIDTH, KEEP_KEYPOINTS, KPT_START, SKELETON,
 };
+use ndarray::{Array4, ArrayView3};
+use std::{error::Error, fmt::Debug};
+
+use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
 pub type Keypoints = [Option<(f32, f32, f32)>; 17];
 
 #[derive(Debug)]
@@ -18,7 +17,7 @@ pub struct PoseTask {
 
 impl PoseTask {
     pub fn new() -> Self {
-        Self { 
+        Self {
             inf_width: INF_WIDTH,
             inf_height: INF_HEIGHT,
             confidence_threshold: CONFIDENCE_THRESHOLD,
@@ -31,7 +30,6 @@ impl PoseTask {
         orig_w: u32,
         orig_h: u32,
     ) -> Result<Keypoints, Box<dyn Error>> {
-
         // shape: [1, 56, 8400]
         let preds = preds.index_axis(ndarray::Axis(0), 0);
 
@@ -82,8 +80,8 @@ impl PoseTask {
 
         for px in data {
             out.push((px >> 16) as u8); // R
-            out.push((px >> 8) as u8);  // G
-            out.push(*px as u8);        // B
+            out.push((px >> 8) as u8); // G
+            out.push(*px as u8); // B
             out.push((px >> 24) as u8); // A
         }
         out
@@ -119,9 +117,7 @@ impl PoseTask {
 
     fn draw_skeleton(&self, dt: &mut DrawTarget, keypoints: &Keypoints) {
         for &(i, j) in SKELETON {
-            if let (Some((x1, y1, c1)), Some((x2, y2, c2))) =
-                (keypoints[i], keypoints[j])
-            {
+            if let (Some((x1, y1, c1)), Some((x2, y2, c2))) = (keypoints[i], keypoints[j]) {
                 if c1 < self.confidence_threshold || c2 < self.confidence_threshold {
                     continue;
                 }
@@ -132,7 +128,12 @@ impl PoseTask {
 
                 dt.stroke(
                     &pb.finish(),
-                    &Source::Solid(SolidSource { r: 255, g: 0, b: 0, a: 255 }),
+                    &Source::Solid(SolidSource {
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    }),
                     &StrokeStyle {
                         width: 2.0,
                         join: LineJoin::Round,
@@ -153,19 +154,18 @@ impl PoseTask {
 
             dt.fill(
                 &pb.finish(),
-                &Source::Solid(SolidSource { r: 0, g: 255, b: 0, a: 255 }),
+                &Source::Solid(SolidSource {
+                    r: 0,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                }),
                 &DrawOptions::new(),
             );
         }
     }
 
-    pub fn preprocess_rgba(
-        &self,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Array4<f32> {
-
+    pub fn preprocess_rgba(&self, rgba: &[u8], width: u32, height: u32) -> Array4<f32> {
         let w = self.inf_width;
         let h = self.inf_height;
 
@@ -207,9 +207,7 @@ impl PoseTask {
         orig_w: u32,
         orig_h: u32,
     ) -> Result<Keypoints, Box<dyn Error>> {
-        let tensor = outputs
-            .get(output_name)
-            .ok_or("Missing output tensor")?;
+        let tensor = outputs.get(output_name).ok_or("Missing output tensor")?;
 
         let array = tensor.try_extract_array::<f32>()?;
 
@@ -218,12 +216,7 @@ impl PoseTask {
         Ok(keypoints)
     }
 
-    pub fn render(
-        &self,
-        result: &Keypoints,
-        width: u32,
-        height: u32,
-    ) -> Vec<u8> {
+    pub fn render(&self, result: &Keypoints, width: u32, height: u32) -> Vec<u8> {
         self.render_pose(result, width, height)
     }
 }

@@ -1,15 +1,15 @@
 pub mod app;
 pub mod camera;
-pub mod cv;
 pub mod config;
-pub mod utils;
 pub mod constants;
+pub mod cv;
+pub mod utils;
 
 use std::sync::{Arc, Mutex};
 
 use camera::{CameraManager, Frame};
-use cv::CVManager;
 use config::Config;
+use cv::CVManager;
 
 pub use app::run;
 
@@ -18,7 +18,7 @@ pub type SharedFrame = Arc<Mutex<Option<Frame>>>;
 #[derive(Clone, Debug)]
 pub struct Pipelines {
     pub camera_manager: Arc<CameraManager>,
-    pub cv_manager: Arc<CVManager>
+    pub cv_manager: Arc<CVManager>,
 }
 
 pub fn new_pipelines() -> Pipelines {
@@ -29,5 +29,8 @@ pub fn new_pipelines() -> Pipelines {
     let camera_manager = Arc::new(CameraManager::new(config.camera, shared_frame.clone()));
     let cv_manager = Arc::new(CVManager::new(shared_frame.clone()));
 
-    Pipelines { camera_manager, cv_manager }
+    Pipelines {
+        camera_manager,
+        cv_manager,
+    }
 }

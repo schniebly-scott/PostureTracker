@@ -1,13 +1,22 @@
 // COCO skeleton
 pub const SKELETON: &[(usize, usize)] = &[
-    (0, 1), (0, 2), (1, 3), (2, 4),
-    (0, 5), (0, 6),
-    (5, 7), (7, 9),
-    (6, 8), (8, 10),
-    (5, 11), (6, 12),
+    (0, 1),
+    (0, 2),
+    (1, 3),
+    (2, 4),
+    (0, 5),
+    (0, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),
     (11, 12),
-    (11, 13), (13, 15),
-    (12, 14), (14, 16),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
 ];
 
 // --------- Keypoint descriptions -----------------
@@ -49,7 +58,7 @@ pub const SKELETON: &[(usize, usize)] = &[
 //     "right_ankle",
 // ];
 
-pub const KPT_START: usize = 5; 
+pub const KPT_START: usize = 5;
 
 pub const INF_WIDTH: usize = 640;
 pub const INF_HEIGHT: usize = 640;
