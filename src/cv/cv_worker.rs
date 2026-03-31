@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{error::Error, thread, time::Instant};
+use std::{error::Error, thread};
 
 use super::{Inference, cv_inference::Model};
 use crate::SharedFrame;
@@ -41,8 +41,7 @@ impl CVWorker {
                     let (width, height, rgba) = (frame.0, frame.1, frame.2.data.clone());
 
                     // ---------- Inference ----------
-                    let now = Instant::now();
-                    let (output, posture_angle_deg) = match model.process_rgba(&rgba, width, height)
+                    let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&rgba, width, height)
                     {
                         Ok(o) => o,
                         Err(e) => {
@@ -50,7 +49,6 @@ impl CVWorker {
                             continue;
                         }
                     };
-                    let elapsed = now.elapsed();
 
                     // ---------- Publish result ----------
                     let buf = RgbaBuffer {
@@ -60,7 +58,7 @@ impl CVWorker {
 
                     let _ = self.core.tx.send(Inference {
                         frame: (width, height, Arc::new(buf)),
-                        inf_time: elapsed,
+                        time_metrics,
                         posture_angle_deg,
                     });
                 } else {

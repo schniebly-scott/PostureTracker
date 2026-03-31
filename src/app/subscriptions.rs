@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc};
 
 use iced::Subscription;
 use iced::advanced::subscription as iced_subscription;
@@ -9,7 +9,7 @@ use iced::widget::image;
 use tokio::sync::broadcast;
 
 use crate::Frame;
-use crate::cv::Inference;
+use crate::cv::{Inference, TimeMetrics};
 use crate::utils::ManagedService;
 use crate::{camera::CameraManager, cv::CVManager};
 
@@ -61,7 +61,7 @@ CV Subscription
 
 pub fn inference_subscription(
     cv_manager: Arc<CVManager>,
-) -> Subscription<(image::Handle, Duration, Option<f32>)> {
+) -> Subscription<(image::Handle, TimeMetrics, Option<f32>)> {
     let rx = cv_manager.subscribe();
     iced_subscription::from_recipe(CVSubscription::new(rx))
 }
@@ -77,7 +77,7 @@ impl CVSubscription {
 }
 
 impl iced_subscription::Recipe for CVSubscription {
-    type Output = (image::Handle, Duration, Option<f32>);
+    type Output = (image::Handle, TimeMetrics, Option<f32>);
     //TODO: make the output inferred from Inference type but still transform frame to handle
 
     fn hash(&self, state: &mut Hasher) {
@@ -96,7 +96,7 @@ impl iced_subscription::Recipe for CVSubscription {
                 let frame = inference.frame;
                 yield (
                     image::Handle::from_rgba(frame.0, frame.1, frame.2.data.clone()),
-                    inference.inf_time,
+                    inference.time_metrics,
                     inference.posture_angle_deg,
                 );
             }

@@ -6,7 +6,7 @@ use ort::{
     value::TensorRef,
 };
 
-use crate::cv::pose::PoseTask;
+use crate::cv::{TimeMetrics, pose::PoseTask};
 
 #[derive(Debug)]
 pub struct Model {
@@ -40,27 +40,34 @@ impl Model {
         rgba: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(Vec<u8>, Option<f32>), Box<dyn Error>> {
+    ) -> Result<(Vec<u8>, TimeMetrics, Option<f32>), Box<dyn Error>> {
         let t0 = Instant::now();
         let input = self.task.preprocess_rgba(rgba, width, height);
-        println!("preprocess: {:?}", t0.elapsed());
+        let preprocess = t0.elapsed();
 
         let t1 = Instant::now();
         let outputs = self
             .session
             .run(inputs![&self.input_name => TensorRef::from_array_view(&input)?])?;
-        println!("inference: {:?}", t1.elapsed());
+        let inference = t1.elapsed();
 
         let t2 = Instant::now();
         let result = self
             .task
             .postprocess(&outputs, &self.output_name, width, height)?;
-        println!("postprocess: {:?}", t2.elapsed());
+        let postprocess = t2.elapsed();
 
         let t3 = Instant::now();
         let img = self.task.render(&result, width, height);
-        println!("render: {:?}", t3.elapsed());
+        let render = t3.elapsed();
+
         let posture_angle_deg = self.task.posture_angle_deg(&result);
-        Ok((img, posture_angle_deg))
+        Ok((img, TimeMetrics {
+            preprocess,
+            postprocess,
+            inference,
+            render
+        },
+        posture_angle_deg))
     }
 }

@@ -4,6 +4,7 @@ mod theme;
 
 use std::time::Duration;
 
+use crate::cv::TimeMetrics;
 use crate::utils::ManagedService;
 use iced::widget::{column, image, row};
 use iced::{Element, Size, Subscription, Task, Theme, window};
@@ -39,20 +40,21 @@ pub struct App {
     cv_frame: Option<image::Handle>,
 
     model_load_time: Option<Duration>,
-    inference_time: Option<Duration>,
+    time_metrics: Option<TimeMetrics>,
     posture_angle_deg: Option<f32>,
     posture_baseline_deg: Option<f32>,
     posture_threshold_deg: f32,
-    bad_posture: bool,
 
+    bad_posture: bool,
     inference_state: InferenceState,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     CamFrame(image::Handle),
-    CvInference((image::Handle, Duration, Option<f32>)),
+    CvInference((image::Handle, TimeMetrics, Option<f32>)),
     WindowCloseRequested(window::Id),
+    OpenDebugWindowPressed,
     LoadModelPressed,
     StartInferencePressed,
     StopInferencePressed,
@@ -62,24 +64,23 @@ pub enum Message {
 impl App {
     fn new(pipelines: crate::Pipelines) -> (Self, Task<Message>) {
         let (main_window_id, open_main_window) = window::open(Self::main_window_settings());
-        let (debug_window_id, open_debug_window) = window::open(Self::debug_window_settings());
 
         (
             Self {
                 pipelines,
                 main_window_id,
-                debug_window_id: Some(debug_window_id),
+                debug_window_id: None,
                 cam_frame: None,
                 cv_frame: None,
                 model_load_time: None,
-                inference_time: None,
+                time_metrics: None,
                 posture_angle_deg: None,
                 posture_baseline_deg: None,
                 posture_threshold_deg: DEFAULT_POSTURE_THRESHOLD_DEG,
                 bad_posture: false,
                 inference_state: InferenceState::Unloaded,
             },
-            Task::batch([open_main_window.discard(), open_debug_window.discard()]),
+            open_main_window.discard(),
         )
     }
 
@@ -89,9 +90,9 @@ impl App {
                 self.cam_frame = Some(frame);
                 Task::none()
             }
-            Message::CvInference((frame, inf_time, posture_angle_deg)) => {
+            Message::CvInference((frame, time_metrics, posture_angle_deg)) => {
                 self.cv_frame = Some(frame);
-                self.inference_time = Some(inf_time);
+                self.time_metrics = Some(time_metrics);
                 self.posture_angle_deg = posture_angle_deg;
 
                 if self.posture_baseline_deg.is_none() {
@@ -114,6 +115,16 @@ impl App {
                     window::close(window_id)
                 } else {
                     Task::none()
+                }
+            }
+            Message::OpenDebugWindowPressed => {
+                if self.debug_window_id.is_some() {
+                    Task::none()
+                } else {
+                    let (debug_window_id, open_debug_window) =
+                        window::open(Self::debug_window_settings());
+                    self.debug_window_id = Some(debug_window_id);
+                    open_debug_window.discard()
                 }
             }
             Message::LoadModelPressed => {
