@@ -5,7 +5,9 @@ use crate::app::theme::{DARK_BLUE, WARNING_RED};
 use crate::app::{App, Message, SampleIntervalChoice};
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let posture_state = if app.bad_posture {
+    let posture_state = if app.posture_baseline_deg.is_none() {
+        "Not calibrated"
+    } else if app.bad_posture {
         "Bad posture detected"
     } else if app.posture_angle_deg.is_some() {
         "Posture within threshold"
@@ -21,7 +23,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
             Message::PostureThresholdChanged
         )
         .step(0.5)
-        .width(iced::Length::Fill),
+        .width(iced::Length::Fill)
+        .on_release(Message::PostureThresholdReleased),
         text(format!("{:.1} deg", app.posture_threshold_deg)),
     ]
     .spacing(12)

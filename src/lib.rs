@@ -22,16 +22,13 @@ pub struct Pipelines {
     pub cv_manager: Arc<CVManager>,
 }
 
-pub fn new_pipelines() -> Pipelines {
-    let config = Config::load("config.toml").expect("Unable to load config");
+pub fn new_app_state() -> (Config, Pipelines) {
+    let config = Config::load_or_default("config.toml");
 
     let shared_frame: SharedFrame = Arc::new(Mutex::new(None));
-
-    let camera_manager = Arc::new(CameraManager::new(config.camera, shared_frame.clone()));
+    let camera_manager = Arc::new(CameraManager::new(config.camera.clone(), shared_frame.clone()));
     let cv_manager = Arc::new(CVManager::new(shared_frame.clone()));
 
-    Pipelines {
-        camera_manager,
-        cv_manager,
-    }
+    let pipelines = Pipelines { camera_manager, cv_manager };
+    (config, pipelines)
 }

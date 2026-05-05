@@ -1,2 +1,15 @@
 [camera]
 device = "/dev/video0"
+
+[posture]
+baseline_deg = 86.30908
+threshold_deg = 6.5
+
+[background]
+interval_secs = 60
+frames_per_sample = 3
+alert_cooldown_secs = 60
+force_dismiss = true
+
+[metrics]
+history_days_to_keep = 30

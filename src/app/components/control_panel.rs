@@ -2,7 +2,7 @@ use iced::widget::{button, column, container, pick_list, text};
 use iced::{Background, Element};
 
 use crate::app::theme::DARK_BLUE;
-use crate::app::{App, InferenceState, Message, SettingsOption};
+use crate::app::{App, CalibrationState, InferenceState, Message, SettingsOption};
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let test_button = match app.inference_state {
@@ -10,6 +10,19 @@ pub fn view(app: &App) -> Element<'_, Message> {
         InferenceState::Stopped | InferenceState::Unloaded => {
             button("Test Posture").on_press(Message::TestPosturePressed)
         }
+    };
+
+    let calibrate_button = match &app.calibration_state {
+        CalibrationState::Idle => {
+            if app.inference_state == InferenceState::Running {
+                button("Set Baseline").on_press(Message::CalibratePressed)
+            } else {
+                button("Set Baseline")
+            }
+        }
+        CalibrationState::Countdown(n) => button(text(format!("Starting in {n}..."))),
+        CalibrationState::Sampling { .. } => button("Sampling..."),
+        CalibrationState::Failed(msg) => button(text(format!("Failed: {msg}"))),
     };
 
     let settings_pick_list = pick_list(
@@ -33,6 +46,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             text("Model Controls").size(20),
             settings_pick_list,
             test_button,
+            calibrate_button,
             tray_hint.map(Element::from).unwrap_or_else(|| container(text("")).into()),
         ]
         .spacing(10),

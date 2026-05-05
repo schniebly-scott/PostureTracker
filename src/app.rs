@@ -5,24 +5,28 @@ mod tray;
 
 use std::time::{Duration, Instant};
 
+use crate::config::{Config, PostureConfig};
 use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
 use iced::widget::{column, image, row};
 use iced::{Element, Size, Subscription, Task, Theme, window};
 
-const DEFAULT_POSTURE_THRESHOLD_DEG: f32 = 12.0;
-const BACKGROUND_SAMPLE_COUNT: usize = 3;
-const ALERT_COOLDOWN: Duration = Duration::from_secs(60);
+const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
+const CALIBRATION_SAMPLE_SECS: u64 = 5;
+const MIN_CALIBRATION_SAMPLES: usize = 5;
 const MAIN_WINDOW_SIZE: Size = Size::new(1000.0, 650.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
+const CONFIG_PATH: &str = "config.toml";
+
 const SETTINGS_OPTIONS: [SettingsOption; 3] = [
     SettingsOption::OpenDebugWindow,
     SettingsOption::HideMainWindow,
     SettingsOption::Quit,
 ];
 
+#[derive(PartialEq)]
 enum InferenceState {
     Unloaded,
     Stopped,
@@ -32,6 +36,13 @@ enum InferenceState {
 enum RunMode {
     Foreground,
     Background,
+}
+
+pub enum CalibrationState {
+    Idle,
+    Countdown(u8),
+    Sampling { samples: Vec<f32>, started_at: Instant },
+    Failed(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,14 +68,13 @@ impl std::fmt::Display for SettingsOption {
             Self::HideMainWindow => "Hide To Tray / Minimize",
             Self::Quit => "Quit App",
         };
-
         f.write_str(label)
     }
 }
 
 pub fn run() -> iced::Result {
     iced::daemon(
-        move || App::new(crate::new_pipelines()),
+        move || App::new(crate::new_app_state()),
         App::update,
         App::view,
     )
@@ -96,12 +106,17 @@ pub struct App {
 
     sample_interval_choice: SampleIntervalChoice,
     custom_interval_input: String,
+    background_sample_count: usize,
+    alert_cooldown: Duration,
 
     background_samples: Option<Vec<Option<f32>>>,
     last_alert_time: Option<Instant>,
     force_dismiss: bool,
 
+    calibration_state: CalibrationState,
+
     metrics: MetricsStore,
+    config: Config,
 }
 
 #[derive(Debug, Clone)]
@@ -117,15 +132,18 @@ pub enum Message {
     TestPosturePressed,
     StopInferencePressed,
     PostureThresholdChanged(f32),
+    PostureThresholdReleased,
     SampleIntervalChoiceChanged(SampleIntervalChoice),
     CustomIntervalInputChanged(String),
     ForceDismissToggled(bool),
     BackgroundSampleTick,
     DismissAlert,
+    CalibratePressed,
+    CalibrationTick,
 }
 
 impl App {
-    fn new(pipelines: crate::Pipelines) -> (Self, Task<Message>) {
+    fn new((config, pipelines): (Config, crate::Pipelines)) -> (Self, Task<Message>) {
         let (main_window_id, open_main_window) = window::open(Self::main_window_settings());
         let tray_state = tray::TrayState::new()
             .map_err(|error| {
@@ -133,6 +151,9 @@ impl App {
                 error
             })
             .ok();
+
+        let (sample_interval_choice, custom_interval_input) =
+            interval_choice_from_secs(config.background.interval_secs);
 
         (
             Self {
@@ -146,17 +167,21 @@ impl App {
                 model_load_time: None,
                 time_metrics: None,
                 posture_angle_deg: None,
-                posture_baseline_deg: None,
-                posture_threshold_deg: DEFAULT_POSTURE_THRESHOLD_DEG,
+                posture_baseline_deg: config.posture.baseline_deg,
+                posture_threshold_deg: config.posture.threshold_deg,
                 bad_posture: false,
                 inference_state: InferenceState::Unloaded,
                 run_mode: RunMode::Foreground,
-                sample_interval_choice: SampleIntervalChoice::Min1,
-                custom_interval_input: String::new(),
+                sample_interval_choice,
+                custom_interval_input,
+                background_sample_count: config.background.frames_per_sample,
+                alert_cooldown: Duration::from_secs(config.background.alert_cooldown_secs),
                 background_samples: None,
                 last_alert_time: None,
-                force_dismiss: true,
-                metrics: MetricsStore::new(),
+                force_dismiss: config.background.force_dismiss,
+                calibration_state: CalibrationState::Idle,
+                metrics: MetricsStore::new(config.metrics.history_days_to_keep),
+                config,
             },
             open_main_window.discard(),
         )
@@ -178,6 +203,28 @@ impl App {
         }
     }
 
+    fn save_config(&mut self) {
+        self.config.posture = PostureConfig {
+            baseline_deg: self.posture_baseline_deg,
+            threshold_deg: self.posture_threshold_deg,
+        };
+        self.config.background.interval_secs = match self.sample_interval_choice {
+            SampleIntervalChoice::Constant => 0,
+            SampleIntervalChoice::Secs30 => 30,
+            SampleIntervalChoice::Min1 => 60,
+            SampleIntervalChoice::Min5 => 300,
+            SampleIntervalChoice::Custom => self.sample_interval_secs().unwrap_or(60),
+        };
+        self.config.background.force_dismiss = self.force_dismiss;
+        if let Err(e) = self.config.save(CONFIG_PATH) {
+            eprintln!("Failed to save config: {e}");
+        }
+    }
+
+    pub fn is_calibrated(&self) -> bool {
+        self.posture_baseline_deg.is_some()
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CamFrame(frame) => {
@@ -189,10 +236,6 @@ impl App {
                 self.time_metrics = Some(time_metrics);
                 self.posture_angle_deg = posture_angle_deg;
 
-                if self.posture_baseline_deg.is_none() {
-                    self.posture_baseline_deg = posture_angle_deg;
-                }
-
                 self.bad_posture = match (self.posture_baseline_deg, posture_angle_deg) {
                     (Some(baseline), Some(current)) => {
                         (current - baseline).abs() >= self.posture_threshold_deg
@@ -202,14 +245,41 @@ impl App {
 
                 self.metrics.ingest(posture_angle_deg, self.bad_posture);
 
+                // Calibration sample collection
+                if let CalibrationState::Sampling { ref mut samples, started_at } =
+                    self.calibration_state
+                {
+                    if let Some(angle) = posture_angle_deg {
+                        samples.push(angle);
+                    }
+
+                    if started_at.elapsed() >= Duration::from_secs(CALIBRATION_SAMPLE_SECS) {
+                        let collected = std::mem::take(samples);
+                        if collected.len() < MIN_CALIBRATION_SAMPLES {
+                            self.calibration_state = CalibrationState::Failed(format!(
+                                "Only {}/{} valid samples — ensure your face and shoulders are visible.",
+                                collected.len(),
+                                MIN_CALIBRATION_SAMPLES
+                            ));
+                        } else {
+                            let mut sorted = collected;
+                            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                            let median = sorted[sorted.len() / 2];
+                            self.posture_baseline_deg = Some(median);
+                            self.calibration_state = CalibrationState::Idle;
+                            self.save_config();
+                        }
+                    }
+                }
+
+                // Background mode posture checking
                 if matches!(self.run_mode, RunMode::Background) {
                     if self.sample_interval_secs().is_none() {
-                        // Constant mode: evaluate every incoming frame
                         if self.bad_posture {
                             let can_alert = self.alert_window_id.is_none()
                                 && self
                                     .last_alert_time
-                                    .map(|t| t.elapsed() >= ALERT_COOLDOWN)
+                                    .map(|t| t.elapsed() >= self.alert_cooldown)
                                     .unwrap_or(true);
 
                             if can_alert {
@@ -218,16 +288,12 @@ impl App {
                                 let (id, open) = window::open(Self::alert_window_settings());
                                 self.alert_window_id = Some(id);
                                 self.last_alert_time = Some(Instant::now());
-                                return Task::batch([
-                                    open.discard(),
-                                    window::maximize(id, true),
-                                ]);
+                                return Task::batch([open.discard(), window::maximize(id, true)]);
                             }
                         } else if self.alert_window_id.is_some() && !self.force_dismiss {
                             return self.update(Message::DismissAlert);
                         }
                     } else {
-                        // Timed mode: collect samples until we have enough
                         if let Some(ref mut samples) = self.background_samples {
                             samples.push(posture_angle_deg);
                         }
@@ -235,7 +301,7 @@ impl App {
                         let has_enough = self
                             .background_samples
                             .as_ref()
-                            .map(|s| s.len() >= BACKGROUND_SAMPLE_COUNT)
+                            .map(|s| s.len() >= self.background_sample_count)
                             .unwrap_or(false);
 
                         if has_enough {
@@ -257,22 +323,18 @@ impl App {
                             self.pipelines.camera_manager.stop();
                             self.pipelines.cv_manager.stop();
 
-                            if bad_count > BACKGROUND_SAMPLE_COUNT / 2 {
+                            if bad_count > self.background_sample_count / 2 {
                                 let can_alert = self.alert_window_id.is_none()
                                     && self
                                         .last_alert_time
-                                        .map(|t| t.elapsed() >= ALERT_COOLDOWN)
+                                        .map(|t| t.elapsed() >= self.alert_cooldown)
                                         .unwrap_or(true);
 
                                 if can_alert {
-                                    let (id, open) =
-                                        window::open(Self::alert_window_settings());
+                                    let (id, open) = window::open(Self::alert_window_settings());
                                     self.alert_window_id = Some(id);
                                     self.last_alert_time = Some(Instant::now());
-                                    return Task::batch([
-                                        open.discard(),
-                                        window::maximize(id, true),
-                                    ]);
+                                    return Task::batch([open.discard(), window::maximize(id, true)]);
                                 }
                             } else if self.alert_window_id.is_some() && !self.force_dismiss {
                                 return self.update(Message::DismissAlert);
@@ -373,7 +435,6 @@ impl App {
                     .start()
                     .expect("Unable to start model");
                 self.posture_angle_deg = None;
-                self.posture_baseline_deg = None;
                 self.bad_posture = false;
                 self.run_mode = RunMode::Foreground;
                 self.inference_state = InferenceState::Running;
@@ -387,6 +448,7 @@ impl App {
                 self.inference_state = InferenceState::Stopped;
                 self.run_mode = RunMode::Foreground;
                 self.background_samples = None;
+                self.calibration_state = CalibrationState::Idle;
                 self.metrics.stop_tracking();
                 Task::none()
             }
@@ -400,6 +462,10 @@ impl App {
                 };
                 Task::none()
             }
+            Message::PostureThresholdReleased => {
+                self.save_config();
+                Task::none()
+            }
             Message::SampleIntervalChoiceChanged(choice) => {
                 let was_continuous = matches!(self.run_mode, RunMode::Background)
                     && self.sample_interval_secs().is_none();
@@ -411,14 +477,12 @@ impl App {
                 if matches!(self.run_mode, RunMode::Background) {
                     match (was_continuous, is_continuous) {
                         (false, true) => {
-                            // Timed → Constant: restart workers so they run continuously
                             if !self.pipelines.camera_manager.is_running() {
                                 self.pipelines.camera_manager.start().ok();
                                 self.pipelines.cv_manager.start().ok();
                             }
                         }
                         (true, false) => {
-                            // Constant → Timed: stop workers, wait for timer
                             self.pipelines.camera_manager.stop();
                             self.pipelines.cv_manager.stop();
                             self.background_samples = None;
@@ -427,16 +491,18 @@ impl App {
                     }
                 }
 
+                self.save_config();
                 Task::none()
             }
             Message::CustomIntervalInputChanged(input) => {
-                // Auto-select Custom when the user types in the field
                 self.sample_interval_choice = SampleIntervalChoice::Custom;
                 self.custom_interval_input = input;
+                self.save_config();
                 Task::none()
             }
             Message::ForceDismissToggled(value) => {
                 self.force_dismiss = value;
+                self.save_config();
                 Task::none()
             }
             Message::BackgroundSampleTick => {
@@ -449,7 +515,6 @@ impl App {
             }
             Message::DismissAlert => {
                 if let Some(id) = self.alert_window_id.take() {
-                    // Constant mode stops workers when showing the alert, so restart them now
                     if matches!(self.run_mode, RunMode::Background)
                         && self.sample_interval_secs().is_none()
                     {
@@ -460,6 +525,25 @@ impl App {
                 } else {
                     Task::none()
                 }
+            }
+            Message::CalibratePressed => {
+                self.calibration_state = CalibrationState::Countdown(CALIBRATION_COUNTDOWN_SECS);
+                Task::none()
+            }
+            Message::CalibrationTick => {
+                match self.calibration_state {
+                    CalibrationState::Countdown(1) => {
+                        self.calibration_state = CalibrationState::Sampling {
+                            samples: Vec::new(),
+                            started_at: Instant::now(),
+                        };
+                    }
+                    CalibrationState::Countdown(n) => {
+                        self.calibration_state = CalibrationState::Countdown(n - 1);
+                    }
+                    _ => {}
+                }
+                Task::none()
             }
         }
     }
@@ -474,24 +558,13 @@ impl App {
 
     pub fn settings_options(&self) -> Vec<SettingsOption> {
         let mut options = Vec::with_capacity(SETTINGS_OPTIONS.len());
-
         for option in SETTINGS_OPTIONS {
             if option == SettingsOption::OpenDebugWindow && self.has_debug_window() {
                 continue;
             }
-
             options.push(option);
         }
-
         options
-    }
-
-    pub fn background_action_label(&self) -> &'static str {
-        if self.has_system_tray() {
-            "Hide To Tray"
-        } else {
-            "Minimize Window"
-        }
     }
 
     pub fn background_action_hint(&self) -> &'static str {
@@ -550,6 +623,13 @@ impl App {
             }
         }
 
+        if matches!(self.calibration_state, CalibrationState::Countdown(_)) {
+            subscriptions.push(
+                iced::time::every(Duration::from_secs(1))
+                    .map(|_| Message::CalibrationTick),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 
@@ -598,6 +678,19 @@ impl App {
             position: window::Position::Centered,
             exit_on_close_request: false,
             ..Default::default()
+        }
+    }
+}
+
+fn interval_choice_from_secs(secs: u64) -> (SampleIntervalChoice, String) {
+    match secs {
+        0 => (SampleIntervalChoice::Constant, String::new()),
+        30 => (SampleIntervalChoice::Secs30, String::new()),
+        60 => (SampleIntervalChoice::Min1, String::new()),
+        300 => (SampleIntervalChoice::Min5, String::new()),
+        other => {
+            let mins = other as f64 / 60.0;
+            (SampleIntervalChoice::Custom, format!("{mins}"))
         }
     }
 }

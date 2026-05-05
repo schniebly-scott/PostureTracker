@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use chrono::{Local, NaiveDate};
 
 const HISTORY_SECS: f64 = 120.0;
-const KEEP_DAYS: i64 = 30;
 
 #[derive(Clone, Debug)]
 pub struct AngleSample {
@@ -36,12 +35,13 @@ pub struct MetricsStore {
     last_broke_at: Option<Instant>,
 
     today: NaiveDate,
+    keep_days: i64,
     data_dir: PathBuf,
     log_file: Option<File>,
 }
 
 impl MetricsStore {
-    pub fn new() -> Self {
+    pub fn new(keep_days: i64) -> Self {
         let data_dir = dirs::data_dir()
             .map(|d| d.join("posturetracker"))
             .unwrap_or_else(|| PathBuf::from(".posturetracker"));
@@ -60,6 +60,7 @@ impl MetricsStore {
             streak_since: None,
             last_broke_at: None,
             today,
+            keep_days,
             data_dir,
             log_file: None,
         };
@@ -226,7 +227,7 @@ impl MetricsStore {
     }
 
     fn prune_old_logs(&self) {
-        let cutoff = self.today - chrono::Duration::days(KEEP_DAYS);
+        let cutoff = self.today - chrono::Duration::days(self.keep_days);
         let Ok(entries) = fs::read_dir(&self.data_dir) else {
             return;
         };

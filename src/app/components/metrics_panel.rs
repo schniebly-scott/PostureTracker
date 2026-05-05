@@ -39,8 +39,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
             metric_row("Breaks in posture:",   m.breaks_today().to_string()),
             metric_row("Time since last break:", fmt_duration(m.time_since_last_break())),
             metric_row("Good posture streak:",  fmt_duration(m.good_posture_streak())),
-            metric_row("Bad posture today:",    fmt_duration(Some(m.bad_posture_duration_today()))),
-            metric_row("Tracked today:",        fmt_duration(Some(m.tracked_duration_today()))),
+            metric_row("Total bad posture time:",    fmt_duration(Some(m.bad_posture_duration_today()))),
+            metric_row("Total time today:",        fmt_duration(Some(m.tracked_duration_today()))),
         ]
         .spacing(6),
     )
