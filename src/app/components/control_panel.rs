@@ -1,37 +1,39 @@
-use iced::widget::{button, column, container, text};
+use iced::widget::{button, column, container, pick_list, text};
 use iced::{Background, Element};
 
 use crate::app::theme::DARK_BLUE;
-use crate::app::{App, InferenceState, Message};
+use crate::app::{App, InferenceState, Message, SettingsOption};
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let debug_button = if app.debug_window_id.is_some() {
-        button("Debug Window")
-    } else {
-        button("Debug Window").on_press(Message::OpenDebugWindowPressed)
-    };
-
-    let load_button = match app.inference_state {
-        InferenceState::Running => button("Load Model"),
+    let test_button = match app.inference_state {
+        InferenceState::Running => button("Stop Test").on_press(Message::StopInferencePressed),
         InferenceState::Stopped | InferenceState::Unloaded => {
-            button("Load Model").on_press(Message::LoadModelPressed)
+            button("Test Posture").on_press(Message::TestPosturePressed)
         }
     };
 
-    let control_button = match app.inference_state {
-        InferenceState::Running => button("Stop Model").on_press(Message::StopInferencePressed),
+    let settings_pick_list = pick_list(
+        app.settings_options(),
+        None::<SettingsOption>,
+        Message::SettingsOptionSelected,
+    )
+    .placeholder("\u{2699} Settings")
+    .width(180)
+    .menu_height(140)
+    .padding([8, 12]);
 
-        InferenceState::Stopped => button("Start Model").on_press(Message::StartInferencePressed),
-
-        InferenceState::Unloaded => button("Start Model"),
+    let tray_hint = if app.has_system_tray() {
+        None
+    } else {
+        Some(text(app.background_action_hint()).size(12))
     };
 
     container(
         column![
             text("Model Controls").size(20),
-            load_button,
-            control_button,
-            debug_button
+            settings_pick_list,
+            test_button,
+            tray_hint.map(Element::from).unwrap_or_else(|| container(text("")).into()),
         ]
         .spacing(10),
     )

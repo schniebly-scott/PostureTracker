@@ -14,6 +14,10 @@ pub trait ManagedService {
 
     fn start(&self) -> Result<(), Box<dyn Error>>;
 
+    fn is_running(&self) -> bool {
+        self.core().running.load(Ordering::SeqCst)
+    }
+
     fn stop(&self) {
         self.core().running.store(false, Ordering::SeqCst);
     }

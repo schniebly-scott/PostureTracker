@@ -1,3 +1,4 @@
+pub mod alert_overlay;
 pub mod camera_panel;
 pub mod control_panel;
 pub mod debug_stats;

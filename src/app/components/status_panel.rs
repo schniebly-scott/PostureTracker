@@ -1,8 +1,8 @@
-use iced::widget::{column, container, row, slider, text};
+use iced::widget::{checkbox, column, container, radio, row, slider, text, text_input};
 use iced::{Background, Element};
 
 use crate::app::theme::{DARK_BLUE, WARNING_RED};
-use crate::app::{App, Message};
+use crate::app::{App, Message, SampleIntervalChoice};
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let posture_state = if app.bad_posture {
@@ -27,22 +27,48 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(12)
     .align_y(iced::Alignment::Center);
 
+    let selected = Some(app.sample_interval_choice);
+
+    let interval_row = row![
+        text("Check Interval:"),
+        radio("Constant", SampleIntervalChoice::Constant, selected, Message::SampleIntervalChoiceChanged),
+        radio("30 sec",   SampleIntervalChoice::Secs30,   selected, Message::SampleIntervalChoiceChanged),
+        radio("1 min",    SampleIntervalChoice::Min1,     selected, Message::SampleIntervalChoiceChanged),
+        radio("5 min",    SampleIntervalChoice::Min5,     selected, Message::SampleIntervalChoiceChanged),
+        radio("Custom:",  SampleIntervalChoice::Custom,   selected, Message::SampleIntervalChoiceChanged),
+        text_input("min", &app.custom_interval_input)
+            .on_input(Message::CustomIntervalInputChanged)
+            .width(60),
+        text("min"),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center);
+
+    let dismiss_row = row![
+        checkbox(app.force_dismiss)
+            .label("Require manual dismissal of alerts")
+            .on_toggle(Message::ForceDismissToggled),
+    ];
+
     container(
         column![
-            text("Status").size(20), 
+            text("Status").size(20),
             row![text("State:"), text(posture_state)].spacing(10),
-            slider_row
-        ].spacing(10)
+            slider_row,
+            interval_row,
+            dismiss_row,
+        ]
+        .spacing(10),
     )
-        .style(move |_| container::Style {
-            background: Some(Background::Color(if app.bad_posture {
-                WARNING_RED
-            } else {
-                DARK_BLUE
-            })),
-            ..Default::default()
-        })
-        .padding(15)
-        .width(iced::Length::Fill)
-        .into()
+    .style(move |_| container::Style {
+        background: Some(Background::Color(if app.bad_posture {
+            WARNING_RED
+        } else {
+            DARK_BLUE
+        })),
+        ..Default::default()
+    })
+    .padding(15)
+    .width(iced::Length::Fill)
+    .into()
 }

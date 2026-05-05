@@ -3,6 +3,7 @@ pub mod camera;
 pub mod config;
 pub mod constants;
 pub mod cv;
+pub mod metrics;
 pub mod utils;
 
 use std::sync::{Arc, Mutex};
