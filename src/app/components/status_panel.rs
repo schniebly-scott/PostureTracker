@@ -1,7 +1,9 @@
+use iced::font::Weight;
 use iced::widget::{checkbox, column, container, radio, row, slider, text, text_input};
-use iced::{Background, Element};
+use iced::{Alignment, Background, Color, Element, Font, Length};
 
-use crate::app::theme::{DARK_BLUE, WARNING_RED};
+use crate::app::components::debug_stats;
+use crate::app::theme::{ACTIVE_RED, DARK_BLUE, OWHITE, WARNING_RED};
 use crate::app::{App, Message, SampleIntervalChoice};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -53,11 +55,42 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .on_toggle(Message::ForceDismissToggled),
     ];
 
+    let bold = Font { weight: Weight::Bold, ..Font::default() };
+    let mode_label = app.mode_label();
+    let mode_color: Color = match mode_label {
+        "Idle" => Color { a: 0.5, ..OWHITE },
+        _      => ACTIVE_RED,
+    };
+    let mode_font = match mode_label {
+        "Idle" => Font::default(),
+        _      => bold,
+    };
+    let mode_row = row![
+        text("Mode:").font(bold).size(18),
+        text(format!("● {mode_label}")).color(mode_color).font(mode_font).size(18),
+    ]
+    .spacing(8);
+
     container(
         column![
             text("Status").size(20),
+            mode_row,
             row![text("State:"), text(posture_state)].spacing(10),
             slider_row,
+            if app.metrics.angle_history.is_empty() {
+                container(
+                    text("No data yet — start testing to see the angle graph")
+                        .color(Color { a: 0.4, ..OWHITE })
+                        .size(16),
+                )
+                .width(Length::Fill)
+                .height(160)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                debug_stats::angle_chart(app, 160u32)
+            },
             interval_row,
             dismiss_row,
         ]

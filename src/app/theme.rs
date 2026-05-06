@@ -51,3 +51,9 @@ pub const WARNING_RED: Color = Color::from_rgb(
     0x5C as f32 / 255.0,
     0x5C as f32 / 255.0,
 );
+
+pub const ACTIVE_RED: Color = Color::from_rgb(
+    0x9A as f32 / 255.0,
+    0x2E as f32 / 255.0,
+    0x2E as f32 / 255.0,
+);

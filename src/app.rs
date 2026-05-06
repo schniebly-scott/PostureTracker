@@ -15,7 +15,7 @@ use iced::{Element, Size, Subscription, Task, Theme, window};
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
 const MIN_CALIBRATION_SAMPLES: usize = 5;
-const MAIN_WINDOW_SIZE: Size = Size::new(1000.0, 650.0);
+const MAIN_WINDOW_SIZE: Size = Size::new(1000.0, 850.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 const CONFIG_PATH: &str = "config.toml";
@@ -140,6 +140,8 @@ pub enum Message {
     DismissAlert,
     CalibratePressed,
     CalibrationTick,
+    EnterBackgroundPressed,
+    StopBackgroundPressed,
 }
 
 impl App {
@@ -223,6 +225,20 @@ impl App {
 
     pub fn is_calibrated(&self) -> bool {
         self.posture_baseline_deg.is_some()
+    }
+
+    pub fn is_background_mode(&self) -> bool {
+        matches!(self.run_mode, RunMode::Background)
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        match self.run_mode {
+            RunMode::Background => "Background",
+            RunMode::Foreground => match self.inference_state {
+                InferenceState::Running => "Testing",
+                _ => "Idle",
+            },
+        }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -347,15 +363,7 @@ impl App {
             }
             Message::WindowCloseRequested(window_id) => {
                 if window_id == self.main_window_id {
-                    if matches!(self.inference_state, InferenceState::Running) {
-                        if self.sample_interval_secs().is_some() {
-                            self.pipelines.camera_manager.stop();
-                            self.pipelines.cv_manager.stop();
-                        }
-                        self.run_mode = RunMode::Background;
-                        self.metrics.stop_tracking();
-                    }
-                    window::minimize(self.main_window_id, true)
+                    return self.update(Message::QuitRequested);
                 } else if self.debug_window_id == Some(window_id) {
                     self.debug_window_id = None;
                     window::close(window_id)
@@ -367,31 +375,9 @@ impl App {
                 }
             }
             Message::HideMainWindowPressed => {
-                if matches!(self.inference_state, InferenceState::Running) {
-                    if self.sample_interval_secs().is_some() {
-                        self.pipelines.camera_manager.stop();
-                        self.pipelines.cv_manager.stop();
-                    }
-                    self.run_mode = RunMode::Background;
-                    self.metrics.stop_tracking();
-                }
                 window::minimize(self.main_window_id, true)
             }
             Message::RestoreMainWindowRequested => {
-                let was_background = matches!(self.run_mode, RunMode::Background);
-                let was_timed = self.sample_interval_secs().is_some();
-                self.run_mode = RunMode::Foreground;
-                self.background_samples = None;
-
-                if was_background && was_timed && !self.pipelines.camera_manager.is_running() {
-                    self.pipelines.camera_manager.start().ok();
-                    self.pipelines.cv_manager.start().ok();
-                }
-
-                if was_background {
-                    self.metrics.start_tracking();
-                }
-
                 Task::batch([
                     window::minimize(self.main_window_id, false),
                     window::gain_focus(self.main_window_id),
@@ -526,6 +512,41 @@ impl App {
                     Task::none()
                 }
             }
+            Message::EnterBackgroundPressed => {
+                if matches!(self.inference_state, InferenceState::Unloaded) {
+                    match self.pipelines.cv_manager.load_model() {
+                        Ok(elapsed) => { self.model_load_time = Some(elapsed); }
+                        Err(e) => {
+                            eprintln!("Unable to load model: {e}");
+                            return Task::none();
+                        }
+                    }
+                }
+
+                if self.sample_interval_secs().is_some() {
+                    self.pipelines.camera_manager.stop();
+                    self.pipelines.cv_manager.stop();
+                } else if !self.pipelines.camera_manager.is_running() {
+                    self.pipelines.camera_manager.start().ok();
+                    self.pipelines.cv_manager.start().ok();
+                }
+
+                self.run_mode = RunMode::Background;
+                self.calibration_state = CalibrationState::Idle;
+                self.bad_posture = false;
+                self.inference_state = InferenceState::Stopped;
+                self.metrics.start_tracking();
+                window::minimize(self.main_window_id, true)
+            }
+            Message::StopBackgroundPressed => {
+                self.pipelines.camera_manager.stop();
+                self.pipelines.cv_manager.stop();
+                self.run_mode = RunMode::Foreground;
+                self.inference_state = InferenceState::Stopped;
+                self.background_samples = None;
+                self.metrics.stop_tracking();
+                Task::none()
+            }
             Message::CalibratePressed => {
                 self.calibration_state = CalibrationState::Countdown(CALIBRATION_COUNTDOWN_SECS);
                 Task::none()
@@ -565,14 +586,6 @@ impl App {
             options.push(option);
         }
         options
-    }
-
-    pub fn background_action_hint(&self) -> &'static str {
-        if self.has_system_tray() {
-            "Closing keeps the app available from the tray."
-        } else {
-            "Tray support is unavailable, so closing will only minimize."
-        }
     }
 
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {

@@ -11,6 +11,17 @@ use crate::metrics::AngleSample;
 
 const HISTORY_SECS: f64 = 120.0;
 
+pub fn angle_chart(app: &App, height: u32) -> Element<'_, Message> {
+    canvas::Canvas::new(AngleChart {
+        history: &app.metrics.angle_history,
+        baseline: app.posture_baseline_deg,
+        threshold: app.posture_threshold_deg,
+    })
+    .width(Length::Fill)
+    .height(height)
+    .into()
+}
+
 pub fn view(app: &App) -> Element<'_, Message> {
     let current_angle = app
         .posture_angle_deg
