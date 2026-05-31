@@ -15,7 +15,7 @@ use iced::{Element, Size, Subscription, Task, Theme, window};
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
 const MIN_CALIBRATION_SAMPLES: usize = 5;
-const MAIN_WINDOW_SIZE: Size = Size::new(1000.0, 850.0);
+const MAIN_WINDOW_SIZE: Size = Size::new(1200.0, 950.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 const CONFIG_PATH: &str = "config.toml";
@@ -59,6 +59,63 @@ pub enum SettingsOption {
     OpenDebugWindow,
     HideMainWindow,
     Quit,
+}
+
+pub const METRICS_TRANSITION_MS: u64 = 240;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlideDirection {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricsCategory {
+    Daily,
+    Session,
+    AllTime,
+    QuickView,
+}
+
+impl MetricsCategory {
+    const ALL: [Self; 4] = [Self::Daily, Self::Session, Self::AllTime, Self::QuickView];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Daily => "Daily",
+            Self::Session => "This Session",
+            Self::AllTime => "All Time",
+            Self::QuickView => "Quick View",
+        }
+    }
+
+    pub fn cycle(self, dir: SlideDirection) -> Self {
+        let i = Self::ALL.iter().position(|c| *c == self).unwrap_or(0);
+        let n = Self::ALL.len();
+        let next = match dir {
+            SlideDirection::Right => (i + 1) % n,
+            SlideDirection::Left => (i + n - 1) % n,
+        };
+        Self::ALL[next]
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MetricsTransition {
+    pub from: MetricsCategory,
+    pub direction: SlideDirection,
+    pub started_at: Instant,
+}
+
+impl MetricsTransition {
+    pub fn progress(&self) -> f32 {
+        let elapsed = self.started_at.elapsed().as_millis() as f32;
+        (elapsed / METRICS_TRANSITION_MS as f32).clamp(0.0, 1.0)
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.started_at.elapsed().as_millis() as u64 >= METRICS_TRANSITION_MS
+    }
 }
 
 impl std::fmt::Display for SettingsOption {
@@ -116,6 +173,10 @@ pub struct App {
     calibration_state: CalibrationState,
 
     metrics: MetricsStore,
+    pub metrics_category: MetricsCategory,
+    pub metrics_transition: Option<MetricsTransition>,
+    pub metrics_reset_open: bool,
+
     config: Config,
 }
 
@@ -142,6 +203,10 @@ pub enum Message {
     CalibrationTick,
     EnterBackgroundPressed,
     StopBackgroundPressed,
+    MetricsCategoryCycled(SlideDirection),
+    MetricsTransitionTick,
+    MetricsResetMenuToggled,
+    MetricsResetConfirmed,
 }
 
 impl App {
@@ -183,6 +248,9 @@ impl App {
                 force_dismiss: config.background.force_dismiss,
                 calibration_state: CalibrationState::Idle,
                 metrics: MetricsStore::new(config.metrics.history_days_to_keep),
+                metrics_category: MetricsCategory::Daily,
+                metrics_transition: None,
+                metrics_reset_open: false,
                 config,
             },
             open_main_window.discard(),
@@ -424,7 +492,6 @@ impl App {
                 self.bad_posture = false;
                 self.run_mode = RunMode::Foreground;
                 self.inference_state = InferenceState::Running;
-                self.metrics.start_tracking();
                 Task::none()
             }
             Message::StopInferencePressed => {
@@ -435,7 +502,6 @@ impl App {
                 self.run_mode = RunMode::Foreground;
                 self.background_samples = None;
                 self.calibration_state = CalibrationState::Idle;
-                self.metrics.stop_tracking();
                 Task::none()
             }
             Message::PostureThresholdChanged(threshold_deg) => {
@@ -566,6 +632,39 @@ impl App {
                 }
                 Task::none()
             }
+            Message::MetricsCategoryCycled(direction) => {
+                let from = self.metrics_category;
+                self.metrics_category = from.cycle(direction);
+                self.metrics_transition = Some(MetricsTransition {
+                    from,
+                    direction,
+                    started_at: Instant::now(),
+                });
+                self.metrics_reset_open = false;
+                Task::none()
+            }
+            Message::MetricsTransitionTick => {
+                if let Some(t) = self.metrics_transition {
+                    if t.is_done() {
+                        self.metrics_transition = None;
+                    }
+                }
+                Task::none()
+            }
+            Message::MetricsResetMenuToggled => {
+                self.metrics_reset_open = !self.metrics_reset_open;
+                Task::none()
+            }
+            Message::MetricsResetConfirmed => {
+                match self.metrics_category {
+                    MetricsCategory::Daily => self.metrics.reset_today(),
+                    MetricsCategory::Session => self.metrics.reset_session(),
+                    MetricsCategory::AllTime => self.metrics.reset_all_time(),
+                    MetricsCategory::QuickView => self.metrics.reset_session(),
+                }
+                self.metrics_reset_open = false;
+                Task::none()
+            }
         }
     }
 
@@ -640,6 +739,13 @@ impl App {
             subscriptions.push(
                 iced::time::every(Duration::from_secs(1))
                     .map(|_| Message::CalibrationTick),
+            );
+        }
+
+        if self.metrics_transition.is_some() {
+            subscriptions.push(
+                iced::time::every(Duration::from_millis(16))
+                    .map(|_| Message::MetricsTransitionTick),
             );
         }
 

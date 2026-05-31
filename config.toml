@@ -6,7 +6,7 @@ baseline_deg = 73.35123
 threshold_deg = 8.5
 
 [background]
-interval_secs = 60
+interval_secs = 0
 frames_per_sample = 3
 alert_cooldown_secs = 60
 force_dismiss = true
