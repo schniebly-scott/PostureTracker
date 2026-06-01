@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
+    #[serde(default)]
     pub camera: CameraConfig,
     #[serde(default)]
     pub posture: PostureConfig,
@@ -12,15 +13,13 @@ pub struct Config {
     pub metrics: MetricsConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CameraConfig {
-    pub device: String,
-}
-
-impl Default for CameraConfig {
-    fn default() -> Self {
-        Self { device: "/dev/video0".to_string() }
-    }
+    /// Device name to capture from. `None` means no camera has been chosen yet,
+    /// which triggers the first-run selection prompt. Omitted from the TOML file
+    /// when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

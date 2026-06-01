@@ -3661,6 +3661,7 @@ dependencies = [
  "dirs 5.0.1",
  "iced",
  "image",
+ "libc",
  "ndarray",
  "ort",
  "raqote",

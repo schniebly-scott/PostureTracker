@@ -23,7 +23,7 @@ impl Drop for RgbaBuffer {
 
 #[derive(Debug)]
 pub struct CameraManager {
-    config: CameraConfig,
+    config: Mutex<CameraConfig>,
     core: ServiceCore<Frame>,
     shared: SharedFrame,
 }
@@ -31,10 +31,16 @@ pub struct CameraManager {
 impl CameraManager {
     pub fn new(config: CameraConfig, shared: SharedFrame) -> Self {
         Self {
-            config,
+            config: Mutex::new(config),
             shared,
             core: ServiceCore::new(2),
         }
+    }
+
+    /// Update the device used for the next capture session. Takes effect when
+    /// the camera is (re)started.
+    pub fn set_device(&self, device: Option<String>) {
+        self.config.lock().unwrap().device = device;
     }
 }
 
@@ -49,7 +55,7 @@ impl ManagedService for CameraManager {
         self.core.running.store(true, Ordering::SeqCst);
 
         CameraWorker {
-            config: self.config.clone(),
+            config: self.config.lock().unwrap().clone(),
             core: self.core.clone(),
             shared: self.shared.clone(),
         }

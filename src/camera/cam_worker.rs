@@ -21,16 +21,27 @@ pub struct CameraWorker {
 
 impl CameraWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
-        let mut camera = Provider::with_device_name(&self.config.device)?;
-        camera.set_pixel_format(ccap::PixelFormat::Yuyv)?; // Prevents auto-conversion from unknown formats
+        let device = self
+            .config
+            .device
+            .as_deref()
+            .ok_or("No camera device configured")?;
+
+        // ccap can't decode the camera's default MJPEG (it renders as green
+        // static / colored bars) and won't switch the device format itself.
+        // Put the device into raw YUYV first; ccap then captures and converts
+        // it to RGBA cleanly. Webcams commonly reset to MJPEG across reboots,
+        // so we do this every time rather than relying on the device default.
+        if !crate::camera::set_capture_format(device) {
+            eprintln!("Warning: could not set {device} to YUYV; capture may be corrupted");
+        }
+
+        let mut camera = Provider::with_device_name(device)?;
         camera.set_pixel_format(ccap::PixelFormat::Rgba32)?;
 
         let width = camera.get_property(PropertyName::Width)? as u32;
         let height = camera.get_property(PropertyName::Height)? as u32;
-        println!(
-            "Camera started successfully, real resolution: {}x{}",
-            width, height
-        );
+        println!("Camera started: {device} @ {width}x{height}");
 
         let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 

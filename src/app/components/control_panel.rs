@@ -1,24 +1,16 @@
-use iced::widget::{button, column, container, pick_list, text};
+use iced::widget::{button, column, container, text};
 use iced::{Background, Element};
 
 use crate::app::theme::DARK_BLUE;
-use crate::app::{App, CalibrationState, InferenceState, Message, SettingsOption};
+use crate::app::{App, CalibrationState, InferenceState, Message};
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let settings_pick_list = pick_list(
-        app.settings_options(),
-        None::<SettingsOption>,
-        Message::SettingsOptionSelected,
-    )
-    .placeholder("\u{2699} Settings")
-    .width(180)
-    .menu_height(140)
-    .padding([8, 12]);
+    let settings_button = button("\u{2699} Settings").on_press(Message::OpenSettingsPressed);
 
     let content = if app.is_background_mode() {
         column![
             text("Model Controls").size(20),
-            settings_pick_list,
+            settings_button,
             button("Stop Background Tracking").on_press(Message::StopBackgroundPressed),
         ]
         .spacing(10)
@@ -55,7 +47,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
         let mut col = column![
             text("Model Controls").size(20),
-            settings_pick_list,
+            settings_button,
             test_button,
         ]
         .spacing(10);

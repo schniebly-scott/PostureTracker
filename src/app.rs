@@ -20,12 +20,6 @@ const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 const CONFIG_PATH: &str = "config.toml";
 
-const SETTINGS_OPTIONS: [SettingsOption; 3] = [
-    SettingsOption::OpenDebugWindow,
-    SettingsOption::HideMainWindow,
-    SettingsOption::Quit,
-];
-
 #[derive(PartialEq)]
 enum InferenceState {
     Unloaded,
@@ -36,6 +30,12 @@ enum InferenceState {
 enum RunMode {
     Foreground,
     Background,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    Dashboard,
+    Settings,
 }
 
 pub enum CalibrationState {
@@ -52,13 +52,6 @@ pub enum SampleIntervalChoice {
     Min1,
     Min5,
     Custom,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsOption {
-    OpenDebugWindow,
-    HideMainWindow,
-    Quit,
 }
 
 pub const METRICS_TRANSITION_MS: u64 = 240;
@@ -118,17 +111,6 @@ impl MetricsTransition {
     }
 }
 
-impl std::fmt::Display for SettingsOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            Self::OpenDebugWindow => "Debug Window",
-            Self::HideMainWindow => "Hide To Tray / Minimize",
-            Self::Quit => "Quit App",
-        };
-        f.write_str(label)
-    }
-}
-
 pub fn run() -> iced::Result {
     iced::daemon(
         move || App::new(crate::new_app_state()),
@@ -177,6 +159,10 @@ pub struct App {
     pub metrics_transition: Option<MetricsTransition>,
     pub metrics_reset_open: bool,
 
+    view: View,
+    pub available_cameras: Vec<crate::camera::CameraOption>,
+    pub camera_prompt_open: bool,
+
     config: Config,
 }
 
@@ -188,7 +174,6 @@ pub enum Message {
     HideMainWindowPressed,
     RestoreMainWindowRequested,
     QuitRequested,
-    SettingsOptionSelected(SettingsOption),
     OpenDebugWindowPressed,
     TestPosturePressed,
     StopInferencePressed,
@@ -207,6 +192,11 @@ pub enum Message {
     MetricsTransitionTick,
     MetricsResetMenuToggled,
     MetricsResetConfirmed,
+    OpenSettingsPressed,
+    CloseSettingsPressed,
+    CameraSelected(crate::camera::CameraOption),
+    CameraPromptConfirmed,
+    RefreshCamerasPressed,
 }
 
 impl App {
@@ -221,6 +211,9 @@ impl App {
 
         let (sample_interval_choice, custom_interval_input) =
             interval_choice_from_secs(config.background.interval_secs);
+
+        let available_cameras = crate::camera::list_cameras();
+        let camera_prompt_open = config.camera.device.is_none();
 
         (
             Self {
@@ -251,6 +244,9 @@ impl App {
                 metrics_category: MetricsCategory::Daily,
                 metrics_transition: None,
                 metrics_reset_open: false,
+                view: View::Dashboard,
+                available_cameras,
+                camera_prompt_open,
                 config,
             },
             open_main_window.discard(),
@@ -452,11 +448,6 @@ impl App {
                 ])
             }
             Message::QuitRequested => iced::exit(),
-            Message::SettingsOptionSelected(option) => match option {
-                SettingsOption::OpenDebugWindow => self.update(Message::OpenDebugWindowPressed),
-                SettingsOption::HideMainWindow => self.update(Message::HideMainWindowPressed),
-                SettingsOption::Quit => self.update(Message::QuitRequested),
-            },
             Message::OpenDebugWindowPressed => {
                 if self.debug_window_id.is_some() {
                     Task::none()
@@ -665,6 +656,39 @@ impl App {
                 self.metrics_reset_open = false;
                 Task::none()
             }
+            Message::OpenSettingsPressed => {
+                self.available_cameras = crate::camera::list_cameras();
+                self.view = View::Settings;
+                Task::none()
+            }
+            Message::CloseSettingsPressed => {
+                self.view = View::Dashboard;
+                Task::none()
+            }
+            Message::RefreshCamerasPressed => {
+                self.available_cameras = crate::camera::list_cameras();
+                Task::none()
+            }
+            Message::CameraSelected(option) => {
+                self.config.camera.device = Some(option.path.clone());
+                self.save_config();
+                self.pipelines.camera_manager.set_device(Some(option.path));
+                // Apply immediately if a session is live so the feed switches
+                // to the newly chosen device.
+                if self.pipelines.camera_manager.is_running() {
+                    self.pipelines.camera_manager.stop();
+                    if let Err(e) = self.pipelines.camera_manager.start() {
+                        eprintln!("Failed to restart camera: {e}");
+                    }
+                }
+                Task::none()
+            }
+            Message::CameraPromptConfirmed => {
+                if self.config.camera.device.is_some() {
+                    self.camera_prompt_open = false;
+                }
+                Task::none()
+            }
         }
     }
 
@@ -676,31 +700,30 @@ impl App {
         self.debug_window_id.is_some()
     }
 
-    pub fn settings_options(&self) -> Vec<SettingsOption> {
-        let mut options = Vec::with_capacity(SETTINGS_OPTIONS.len());
-        for option in SETTINGS_OPTIONS {
-            if option == SettingsOption::OpenDebugWindow && self.has_debug_window() {
-                continue;
-            }
-            options.push(option);
-        }
-        options
-    }
-
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if window_id == self.main_window_id {
-            column![
-                row![
-                    components::camera_panel::view(self),
-                    column![
-                        components::control_panel::view(self),
-                        components::metrics_panel::view(self),
-                    ]
-                    .width(iced::Length::FillPortion(1))
-                ],
-                components::status_panel::view(self)
-            ]
-            .into()
+            let content: Element<'_, Message> = match self.view {
+                View::Dashboard => column![
+                    row![
+                        components::camera_panel::view(self),
+                        column![
+                            components::control_panel::view(self),
+                            components::metrics_panel::view(self),
+                        ]
+                        .width(iced::Length::FillPortion(1))
+                    ],
+                    components::status_panel::view(self)
+                ]
+                .into(),
+                View::Settings => components::settings_panel::view(self),
+            };
+
+            if self.camera_prompt_open {
+                iced::widget::stack![content, components::settings_panel::camera_prompt(self)]
+                    .into()
+            } else {
+                content
+            }
         } else if self.debug_window_id == Some(window_id) {
             components::debug_stats::view(self)
         } else if self.alert_window_id == Some(window_id) {
