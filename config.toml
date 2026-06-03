@@ -2,11 +2,11 @@
 device = "/dev/video0"
 
 [posture]
-baseline_deg = 88.95872
+baseline_deg = 90.0564
 threshold_deg = 4.5
 
 [background]
-interval_secs = 60
+interval_secs = 0
 frames_per_sample = 3
 alert_cooldown_secs = 60
 force_dismiss = true

@@ -9,13 +9,13 @@ use crate::config::{Config, PostureConfig};
 use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
-use iced::widget::{column, image, row};
-use iced::{Element, Size, Subscription, Task, Theme, window};
+use iced::widget::{column, container, image, row};
+use iced::{Element, Length, Size, Subscription, Task, Theme, window};
 
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
 const MIN_CALIBRATION_SAMPLES: usize = 5;
-const MAIN_WINDOW_SIZE: Size = Size::new(1200.0, 950.0);
+const MAIN_WINDOW_SIZE: Size = Size::new(1206.0, 961.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 const CONFIG_PATH: &str = "config.toml";
@@ -187,6 +187,7 @@ pub enum Message {
     CalibratePressed,
     CalibrationTick,
     EnterBackgroundPressed,
+    StartForegroundPressed,
     StopBackgroundPressed,
     MetricsCategoryCycled(SlideDirection),
     MetricsTransitionTick,
@@ -295,6 +296,10 @@ impl App {
         matches!(self.run_mode, RunMode::Background)
     }
 
+    pub fn is_camera_running(&self) -> bool {
+        self.pipelines.camera_manager.is_running()
+    }
+
     pub fn mode_label(&self) -> &'static str {
         match self.run_mode {
             RunMode::Background => "Background",
@@ -305,13 +310,53 @@ impl App {
         }
     }
 
+    /// Loads the model if needed, starts/stops the pipeline per the sample
+    /// interval, and switches into background tracking. Returns `false` if the
+    /// model failed to load (the caller should bail without changing windows).
+    fn begin_background_tracking(&mut self) -> bool {
+        if matches!(self.inference_state, InferenceState::Unloaded) {
+            match self.pipelines.cv_manager.load_model() {
+                Ok(elapsed) => {
+                    self.model_load_time = Some(elapsed);
+                }
+                Err(e) => {
+                    eprintln!("Unable to load model: {e}");
+                    return false;
+                }
+            }
+        }
+
+        if self.sample_interval_secs().is_some() {
+            self.pipelines.camera_manager.stop();
+            self.pipelines.cv_manager.stop();
+        } else if !self.pipelines.camera_manager.is_running() {
+            self.pipelines.camera_manager.start().ok();
+            self.pipelines.cv_manager.start().ok();
+        }
+
+        self.run_mode = RunMode::Background;
+        self.calibration_state = CalibrationState::Idle;
+        self.bad_posture = false;
+        self.inference_state = InferenceState::Stopped;
+        self.metrics.start_tracking();
+        true
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CamFrame(frame) => {
+                // Drop frames that were already in flight when the camera was
+                // stopped, so a stale frame doesn't linger after a test ends.
+                if !self.pipelines.camera_manager.is_running() {
+                    return Task::none();
+                }
                 self.cam_frame = Some(frame);
                 Task::none()
             }
             Message::CvInference((frame, time_metrics, posture_angle_deg)) => {
+                if !self.pipelines.cv_manager.is_running() {
+                    return Task::none();
+                }
                 self.cv_frame = Some(frame);
                 self.time_metrics = Some(time_metrics);
                 self.posture_angle_deg = posture_angle_deg;
@@ -488,6 +533,8 @@ impl App {
             Message::StopInferencePressed => {
                 self.pipelines.camera_manager.stop();
                 self.pipelines.cv_manager.stop();
+                self.cam_frame = None;
+                self.cv_frame = None;
                 self.bad_posture = false;
                 self.inference_state = InferenceState::Stopped;
                 self.run_mode = RunMode::Foreground;
@@ -570,34 +617,26 @@ impl App {
                 }
             }
             Message::EnterBackgroundPressed => {
-                if matches!(self.inference_state, InferenceState::Unloaded) {
-                    match self.pipelines.cv_manager.load_model() {
-                        Ok(elapsed) => { self.model_load_time = Some(elapsed); }
-                        Err(e) => {
-                            eprintln!("Unable to load model: {e}");
-                            return Task::none();
-                        }
-                    }
+                if self.begin_background_tracking() {
+                    window::minimize(self.main_window_id, true)
+                } else {
+                    Task::none()
                 }
-
-                if self.sample_interval_secs().is_some() {
-                    self.pipelines.camera_manager.stop();
-                    self.pipelines.cv_manager.stop();
-                } else if !self.pipelines.camera_manager.is_running() {
-                    self.pipelines.camera_manager.start().ok();
-                    self.pipelines.cv_manager.start().ok();
+            }
+            Message::StartForegroundPressed => {
+                // Same tracking start as Enter Background, but keep the window
+                // visible and focused instead of minimizing it.
+                if self.begin_background_tracking() {
+                    window::gain_focus(self.main_window_id)
+                } else {
+                    Task::none()
                 }
-
-                self.run_mode = RunMode::Background;
-                self.calibration_state = CalibrationState::Idle;
-                self.bad_posture = false;
-                self.inference_state = InferenceState::Stopped;
-                self.metrics.start_tracking();
-                window::minimize(self.main_window_id, true)
             }
             Message::StopBackgroundPressed => {
                 self.pipelines.camera_manager.stop();
                 self.pipelines.cv_manager.stop();
+                self.cam_frame = None;
+                self.cv_frame = None;
                 self.run_mode = RunMode::Foreground;
                 self.inference_state = InferenceState::Stopped;
                 self.background_samples = None;
@@ -703,18 +742,25 @@ impl App {
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if window_id == self.main_window_id {
             let content: Element<'_, Message> = match self.view {
-                View::Dashboard => column![
-                    row![
-                        components::camera_panel::view(self),
-                        column![
-                            components::control_panel::view(self),
-                            components::metrics_panel::view(self),
+                View::Dashboard => {
+                    let body = column![
+                        row![
+                            components::camera_panel::view(self),
+                            column![
+                                components::control_panel::view(self),
+                                components::metrics_panel::view(self),
+                            ]
+                            .spacing(14)
+                            .width(Length::Fixed(462.0)),
                         ]
-                        .width(iced::Length::FillPortion(1))
-                    ],
-                    components::status_panel::view(self)
-                ]
-                .into(),
+                        .spacing(14)
+                        .height(Length::FillPortion(7)),
+                        components::status_panel::view(self),
+                    ]
+                    .spacing(14);
+
+                    container(body).padding(14).height(Length::Fill).into()
+                }
                 View::Settings => components::settings_panel::view(self),
             };
 

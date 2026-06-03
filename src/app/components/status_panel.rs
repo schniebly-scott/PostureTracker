@@ -1,110 +1,284 @@
-use iced::font::Weight;
-use iced::widget::{checkbox, column, container, radio, row, slider, text, text_input};
-use iced::{Alignment, Background, Color, Element, Font, Length};
+use iced::border::Border;
+use iced::widget::{button, column, container, row, slider, text, text_input, toggler, Space};
+use iced::{Alignment, Background, Color, Element, Length, Length::Fill};
 
 use crate::app::components::debug_stats;
-use crate::app::theme::{ACTIVE_RED, DARK_BLUE, OWHITE, WARNING_RED};
+use crate::app::components::ui;
+use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, SEL, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
 
-pub fn view(app: &App) -> Element<'_, Message> {
-    let posture_state = if app.posture_baseline_deg.is_none() {
-        "Not calibrated"
+/// State of the live-status badge, mapped to a label + accent color.
+fn status_state(app: &App) -> (&'static str, &'static str, Color) {
+    let active = app.is_camera_running() || app.is_background_mode();
+    if app.posture_baseline_deg.is_none() {
+        ("Not calibrated", "neutral", T3)
     } else if app.bad_posture {
-        "Bad posture detected"
+        ("Bad posture detected", "bad", RED)
     } else if app.posture_angle_deg.is_some() {
-        "Posture within threshold"
+        ("Posture within range", "ok", GREEN)
+    } else if active {
+        ("Waiting for pose data", "neutral", T3)
     } else {
-        "Waiting for pose data"
+        ("Idle", "neutral", T3)
+    }
+}
+
+fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Message> {
+    let (bg, border, text_color) = match kind {
+        "neutral" => (ELEV, LINE, T2),
+        _ => (ui::mix(PANEL, color, 0.15), ui::with_alpha(color, 0.38), color),
     };
 
-    let slider_row = row![
-        text("Angle Threshold"),
-        slider(
-            1.0..=45.0,
-            app.posture_threshold_deg,
-            Message::PostureThresholdChanged
-        )
-        .step(0.5)
-        .width(iced::Length::Fill)
-        .on_release(Message::PostureThresholdReleased),
-        text(format!("{:.1} deg", app.posture_threshold_deg)),
-    ]
-    .spacing(12)
-    .align_y(iced::Alignment::Center);
-
-    let selected = Some(app.sample_interval_choice);
-
-    let interval_row = row![
-        text("Check Interval:"),
-        radio("Constant", SampleIntervalChoice::Constant, selected, Message::SampleIntervalChoiceChanged),
-        radio("30 sec",   SampleIntervalChoice::Secs30,   selected, Message::SampleIntervalChoiceChanged),
-        radio("1 min",    SampleIntervalChoice::Min1,     selected, Message::SampleIntervalChoiceChanged),
-        radio("5 min",    SampleIntervalChoice::Min5,     selected, Message::SampleIntervalChoiceChanged),
-        radio("Custom:",  SampleIntervalChoice::Custom,   selected, Message::SampleIntervalChoiceChanged),
-        text_input("min", &app.custom_interval_input)
-            .on_input(Message::CustomIntervalInputChanged)
-            .width(60),
-        text("min"),
-    ]
-    .spacing(12)
-    .align_y(iced::Alignment::Center);
-
-    let dismiss_row = row![
-        checkbox(app.force_dismiss)
-            .label("Require manual dismissal of alerts")
-            .on_toggle(Message::ForceDismissToggled),
-    ];
-
-    let bold = Font { weight: Weight::Bold, ..Font::default() };
-    let mode_label = app.mode_label();
-    let mode_color: Color = match mode_label {
-        "Idle" => Color { a: 0.5, ..OWHITE },
-        _      => ACTIVE_RED,
-    };
-    let mode_font = match mode_label {
-        "Idle" => Font::default(),
-        _      => bold,
-    };
-    let mode_row = row![
-        text("Mode:").font(bold).size(18),
-        text(format!("● {mode_label}")).color(mode_color).font(mode_font).size(18),
-    ]
-    .spacing(8);
+    let dot = container(Space::new().width(9).height(9)).style(move |_| container::Style {
+        background: Some(Background::Color(color)),
+        border: Border::default().rounded(5),
+        ..Default::default()
+    });
 
     container(
-        column![
-            text("Status").size(20),
-            mode_row,
-            row![text("State:"), text(posture_state)].spacing(10),
-            slider_row,
-            if app.metrics.angle_history.is_empty() {
-                container(
-                    text("No data yet — start testing to see the angle graph")
-                        .color(Color { a: 0.4, ..OWHITE })
-                        .size(16),
-                )
-                .width(Length::Fill)
-                .height(160)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .into()
-            } else {
-                debug_stats::angle_chart(app, 160u32)
-            },
-            interval_row,
-            dismiss_row,
-        ]
-        .spacing(10),
+        row![dot, text(label).size(13).font(ui::semibold()).color(text_color)]
+            .spacing(9)
+            .align_y(Alignment::Center),
     )
+    .padding([7, 13])
     .style(move |_| container::Style {
-        background: Some(Background::Color(if app.bad_posture {
-            WARNING_RED
-        } else {
-            DARK_BLUE
-        })),
+        background: Some(Background::Color(bg)),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 999.0.into(),
+        },
         ..Default::default()
     })
-    .padding(15)
-    .width(iced::Length::Fill)
     .into()
+}
+
+fn state_line(app: &App) -> String {
+    if app.posture_baseline_deg.is_none() {
+        "Calibrate a baseline to start checking your alignment.".to_string()
+    } else if app.bad_posture {
+        "You've drifted past your threshold — straighten up to clear the alert.".to_string()
+    } else if let (Some(b), Some(a)) = (app.posture_baseline_deg, app.posture_angle_deg) {
+        format!(
+            "Looking good — your head-to-shoulder angle is {:.1}\u{00B0} from your calibrated baseline.",
+            (a - b).abs()
+        )
+    } else if app.is_camera_running() || app.is_background_mode() {
+        "Waiting for pose data — make sure your head and shoulders are visible.".to_string()
+    } else {
+        "Tracking is idle. Your alignment will appear here once a session begins.".to_string()
+    }
+}
+
+/// Custom-track slider: green fill (red when bad), white knob, value read-out.
+fn threshold_field(app: &App) -> Element<'_, Message> {
+    let bad = app.bad_posture;
+    let accent = if bad { RED } else { GREEN };
+
+    let head = row![
+        text("Angle threshold").size(16).font(ui::semibold()).color(T2),
+        Space::new().width(Fill),
+        ui::value(format!("{:.1}\u{00B0}", app.posture_threshold_deg), 13, T1),
+    ]
+    .align_y(Alignment::Center);
+
+    let track = slider(
+        1.0..=45.0,
+        app.posture_threshold_deg,
+        Message::PostureThresholdChanged,
+    )
+    .step(0.5)
+    .width(Fill)
+    .on_release(Message::PostureThresholdReleased)
+    .style(move |_theme, _status| slider::Style {
+        rail: slider::Rail {
+            backgrounds: (
+                Background::Color(accent),
+                Background::Color(ELEV),
+            ),
+            width: 6.0,
+            border: Border {
+                color: LINE,
+                width: 1.0,
+                radius: 999.0.into(),
+            },
+        },
+        handle: slider::Handle {
+            shape: slider::HandleShape::Circle { radius: 9.0 },
+            background: Background::Color(Color::WHITE),
+            border_width: 0.0,
+            border_color: Color::TRANSPARENT,
+        },
+    });
+
+    column![head, track].spacing(9).into()
+}
+
+fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'_, Message> {
+    button(
+        text(label.to_string())
+            .size(13)
+            .font(ui::semibold())
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([7, 10])
+    .on_press(msg)
+    .style(move |_theme, status| {
+        let (bg, tc) = if selected {
+            (Some(Background::Color(SEL)), T1)
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => (None, T1),
+                _ => (None, T3),
+            }
+        };
+        button::Style {
+            background: bg,
+            text_color: tc,
+            border: Border::default().rounded(7),
+            ..button::Style::default()
+        }
+    })
+}
+
+fn interval_field(app: &App) -> Element<'_, Message> {
+    let sel = app.sample_interval_choice;
+    let opts = [
+        ("Constant", SampleIntervalChoice::Constant),
+        ("30s", SampleIntervalChoice::Secs30),
+        ("1 min", SampleIntervalChoice::Min1),
+        ("5 min", SampleIntervalChoice::Min5),
+        ("Custom", SampleIntervalChoice::Custom),
+    ];
+
+    let mut seg = row![].spacing(2);
+    for (label, choice) in opts {
+        seg = seg.push(seg_button(
+            label,
+            sel == choice,
+            Message::SampleIntervalChoiceChanged(choice),
+        ));
+    }
+
+    let seg = container(seg)
+        .padding(3)
+        .style(|_| container::Style {
+            background: Some(Background::Color(ELEV)),
+            border: Border {
+                color: LINE,
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..Default::default()
+        });
+
+    let mut col = column![
+        text("Check interval").size(16).font(ui::semibold()).color(T2),
+        seg,
+    ]
+    .spacing(9);
+
+    if sel == SampleIntervalChoice::Custom {
+        col = col.push(
+            row![
+                text_input("min", &app.custom_interval_input)
+                    .on_input(Message::CustomIntervalInputChanged)
+                    .width(70),
+                text("minutes").size(12).color(T3),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    col.into()
+}
+
+fn dismiss_toggle(app: &App) -> Element<'_, Message> {
+    let copy = column![
+        text("Require manual dismissal").size(16).font(ui::semibold()).color(T2),
+        text("Alerts stay until you acknowledge them").size(13).color(T3),
+    ]
+    .spacing(2);
+
+    row![
+        copy,
+        Space::new().width(Fill),
+        toggler(app.force_dismiss).on_toggle(Message::ForceDismissToggled),
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn graph_card(app: &App) -> Element<'_, Message> {
+    let legend = |color: Color, label: &'static str| {
+        row![
+            container(Space::new().width(14).height(3)).style(move |_| container::Style {
+                background: Some(Background::Color(color)),
+                border: Border::default().rounded(2),
+                ..Default::default()
+            }),
+            text(label).size(16).color(T3),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+    };
+
+    let head = row![
+        text("HEAD-TO-SHOULDER ANGLE \u{00B7} LAST 2 MIN")
+            .size(14)
+            .font(ui::semibold())
+            .color(T3),
+        Space::new().width(Fill),
+        legend(GREEN, "Angle"),
+        legend(RED, "Threshold"),
+    ]
+    .spacing(14)
+    .align_y(Alignment::Center);
+
+    let chart: Element<_> = if app.metrics.angle_history.is_empty() {
+        container(
+            text("No data — start a session to graph your posture")
+                .size(18)
+                .color(T3),
+        )
+        .center_x(Fill)
+        .center_y(Fill)
+        .into()
+    } else {
+        debug_stats::angle_chart(app, Length::Fill)
+    };
+
+    container(column![head, chart].spacing(8).height(Fill))
+        .padding([14, 16])
+        .width(Fill)
+        .height(Fill)
+        .style(ui::tile_style)
+        .into()
+}
+
+pub fn view(app: &App) -> Element<'_, Message> {
+    let (label, kind, color) = status_state(app);
+
+    let left = column![
+        ui::micro_label("Live status"),
+        state_badge(label, kind, color),
+        text(state_line(app)).size(14).color(T2),
+        threshold_field(app),
+        interval_field(app),
+        dismiss_toggle(app),
+    ]
+    .spacing(16)
+    .width(Length::Fixed(366.0));
+
+    let body = row![left, graph_card(app)]
+        .spacing(22)
+        .height(Fill);
+
+    container(body)
+        .style(ui::panel_alert_style(app.bad_posture))
+        .padding(16)
+        .width(Fill)
+        .height(Length::FillPortion(5))
+        .into()
 }

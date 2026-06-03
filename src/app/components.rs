@@ -6,3 +6,4 @@ pub mod metrics_panel;
 pub mod settings_panel;
 pub mod slide;
 pub mod status_panel;
+pub mod ui;

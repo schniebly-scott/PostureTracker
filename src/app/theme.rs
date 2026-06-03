@@ -2,58 +2,76 @@ use iced::Color;
 use iced::Theme;
 use iced::theme::Palette;
 
+/// Build a color from a 0xRRGGBB literal.
+const fn rgb(hex: u32) -> Color {
+    Color::from_rgb(
+        ((hex >> 16) & 0xFF) as f32 / 255.0,
+        ((hex >> 8) & 0xFF) as f32 / 255.0,
+        (hex & 0xFF) as f32 / 255.0,
+    )
+}
+
+/// A translucent white, used for the design's hairline borders.
+pub const fn white_a(a: f32) -> Color {
+    Color { r: 1.0, g: 1.0, b: 1.0, a }
+}
+
 pub fn custom_theme() -> Theme {
     Theme::custom(
-        "custom",
+        "PostureTracker — Refined Slate",
         Palette {
-            background: DARK_BLUE,
-            text: OWHITE,
-            primary: MID_BLUE,
-            success: LIGHT_BLUE,
-            danger: OBROWN,
-            warning: WARNING_RED,
+            background: BG,
+            text: T1,
+            primary: GREEN,
+            success: GREEN,
+            danger: RED,
+            warning: AMBER,
         },
     )
 }
 
-pub const OWHITE: Color = Color::from_rgb(
-    0xE3 as f32 / 255.0,
-    0xE8 as f32 / 255.0,
-    0xE3 as f32 / 255.0,
-);
+// ============================================================
+// Direction A — "Refined Slate" design tokens
+// ============================================================
 
-pub const OBROWN: Color = Color::from_rgb(
-    0x66 as f32 / 255.0,
-    0x63 as f32 / 255.0,
-    0x5A as f32 / 255.0,
-);
+/// Window backdrop behind the panels.
+pub const BG: Color = rgb(0x15181D);
+/// Default panel surface.
+pub const PANEL: Color = rgb(0x1B1F25);
+/// Raised surface — tiles, tracks, chips.
+pub const ELEV: Color = rgb(0x23282F);
+/// Hover state for interactive surfaces.
+pub const HOVER: Color = rgb(0x2A3038);
+/// Selected segment background.
+pub const SEL: Color = rgb(0x323943);
 
-pub const LIGHT_BLUE: Color = Color::from_rgb(
-    0x7E as f32 / 255.0,
-    0x99 as f32 / 255.0,
-    0x9F as f32 / 255.0,
-);
+/// Hairline border.
+pub const LINE: Color = white_a(0.07);
+/// Stronger hairline, used on hover/emphasis.
+pub const LINE_STRONG: Color = white_a(0.14);
 
-pub const MID_BLUE: Color = Color::from_rgb(
-    0x4E as f32 / 255.0,
-    0x53 as f32 / 255.0,
-    0x5B as f32 / 255.0,
-);
+/// Primary text.
+pub const T1: Color = rgb(0xE8EBEF);
+/// Secondary text.
+pub const T2: Color = rgb(0xA3ACB7);
+/// Tertiary / micro-label text.
+pub const T3: Color = rgb(0x6C7682);
 
-pub const DARK_BLUE: Color = Color::from_rgb(
-    0x2E as f32 / 255.0,
-    0x33 as f32 / 255.0,
-    0x3E as f32 / 255.0,
-);
+/// Green accent (good posture, primary actions).
+pub const GREEN: Color = rgb(0x3DDC97);
+/// Ink used on top of the green accent.
+pub const ON_GREEN: Color = rgb(0x062014);
 
-pub const WARNING_RED: Color = Color::from_rgb(
-    0xC7 as f32 / 255.0,
-    0x5C as f32 / 255.0,
-    0x5C as f32 / 255.0,
-);
+/// Red alert (bad posture, danger).
+pub const RED: Color = rgb(0xF26D78);
 
-pub const ACTIVE_RED: Color = Color::from_rgb(
-    0x9A as f32 / 255.0,
-    0x2E as f32 / 255.0,
-    0x2E as f32 / 255.0,
-);
+/// Amber warning.
+pub const AMBER: Color = rgb(0xE8B15A);
+
+// ---- Legacy aliases (kept for the settings / debug / alert screens
+// that are out of scope for this redesign pass) ----
+pub const OWHITE: Color = T1;
+pub const LIGHT_BLUE: Color = GREEN;
+pub const MID_BLUE: Color = ELEV;
+pub const DARK_BLUE: Color = PANEL;
+pub const WARNING_RED: Color = RED;

@@ -6,7 +6,8 @@ use iced::widget::{button, column, container, progress_bar, row, stack, text, Sp
 use iced::{Alignment, Background, Color, Element, Font, Length};
 
 use crate::app::components::slide::slide;
-use crate::app::theme::{DARK_BLUE, LIGHT_BLUE, MID_BLUE, OWHITE, WARNING_RED};
+use crate::app::components::ui;
+use crate::app::theme::{DARK_BLUE, LIGHT_BLUE, LINE, MID_BLUE, OWHITE, WARNING_RED};
 use crate::app::{App, MetricsCategory, Message, SlideDirection};
 
 fn fmt_duration(d: Option<Duration>) -> String {
@@ -52,24 +53,27 @@ fn lighten(color: Color, amount: f32) -> Color {
     }
 }
 
+// Raised tile surface (matches the new design's ELEV token).
 const CARD_BG: Color = Color {
-    r: 0x5C as f32 / 255.0,
-    g: 0x62 as f32 / 255.0,
-    b: 0x6B as f32 / 255.0,
+    r: 0x23 as f32 / 255.0,
+    g: 0x28 as f32 / 255.0,
+    b: 0x2F as f32 / 255.0,
     a: 1.0,
 };
 
+// Hero card — a touch lighter than the tiles so it still leads (HOVER token).
 const PRIMARY_BG: Color = Color {
-    r: 0x6A as f32 / 255.0,
-    g: 0x71 as f32 / 255.0,
-    b: 0x7B as f32 / 255.0,
+    r: 0x2A as f32 / 255.0,
+    g: 0x30 as f32 / 255.0,
+    b: 0x38 as f32 / 255.0,
     a: 1.0,
 };
 
+// Reset popup surface (PANEL token).
 const POPUP_BG: Color = Color {
-    r: 0x25 as f32 / 255.0,
-    g: 0x29 as f32 / 255.0,
-    b: 0x32 as f32 / 255.0,
+    r: 0x1B as f32 / 255.0,
+    g: 0x1F as f32 / 255.0,
+    b: 0x25 as f32 / 255.0,
     a: 1.0,
 };
 
@@ -84,11 +88,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .height(Length::Fill),
     )
-    .style(|_| container::Style {
-        background: Some(Background::Color(MID_BLUE)),
-        ..Default::default()
-    })
-    .padding(15)
+    .style(ui::panel_style)
+    .padding(16)
     .width(Length::Fill)
     .height(Length::Fill)
     .clip(true)
@@ -256,7 +257,11 @@ fn view_session(app: &App) -> Element<'_, Message> {
     .clip(true)
     .style(|_| container::Style {
         background: Some(Background::Color(CARD_BG)),
-        border: Border::default().rounded(6),
+        border: Border {
+            color: LINE,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
         ..Default::default()
     });
 
@@ -372,7 +377,7 @@ fn primary_card<'a>(
     .align_y(Alignment::Center);
 
     let value_text = text(value)
-        .size(28)
+        .size(23)
         .font(bold())
         .wrapping(iced::widget::text::Wrapping::None);
 
@@ -388,13 +393,12 @@ fn primary_card<'a>(
     )
     .padding([12, 14])
     .width(Length::Fill)
-    .clip(true)
     .style(move |_| container::Style {
         background: Some(Background::Color(PRIMARY_BG)),
         border: Border {
-            color: accent,
-            width: 0.0,
-            radius: 8.0.into(),
+            color: LINE,
+            width: 1.0,
+            radius: 10.0.into(),
         },
         ..Default::default()
     });
@@ -426,29 +430,34 @@ fn secondary_card<'a>(
     };
 
     container(
-        column![
+        row![
             row![
-                text(icon).size(12),
-                text(label).size(11).color(Color { a: 0.75, ..OWHITE }),
+                text(icon).size(13).color(OWHITE),
+                text(label).size(12).color(OWHITE),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
+            Space::new().width(Length::Fill),
             text(value)
-                .size(16)
+                .size(17)
                 .font(bold())
                 .color(value_color)
-                .width(Length::Fill)
                 .wrapping(iced::widget::text::Wrapping::None),
         ]
-        .spacing(4)
+        .spacing(10)
+        .align_y(Alignment::Center)
         .width(Length::Fill),
     )
-    .padding(8)
+    .padding([10, 12])
     .width(Length::Fill)
     .clip(true)
     .style(|_| container::Style {
         background: Some(Background::Color(CARD_BG)),
-        border: Border::default().rounded(6),
+        border: Border {
+            color: LINE,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
         ..Default::default()
     })
     .into()
@@ -505,7 +514,11 @@ fn quick_card<'a>(
         .clip(true)
         .style(|_| container::Style {
             background: Some(Background::Color(PRIMARY_BG)),
-            border: Border::default().rounded(8),
+            border: Border {
+                color: LINE,
+                width: 1.0,
+                radius: 10.0.into(),
+            },
             ..Default::default()
         });
 
@@ -604,9 +617,9 @@ fn reset_popup(category: MetricsCategory) -> Element<'static, Message> {
     .style(|_| container::Style {
         background: Some(Background::Color(POPUP_BG)),
         border: Border {
-            color: Color { a: 0.6, ..LIGHT_BLUE },
+            color: LINE,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: 10.0.into(),
         },
         ..Default::default()
     })
