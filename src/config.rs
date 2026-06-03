@@ -11,6 +11,16 @@ pub struct Config {
     pub background: BackgroundConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub session: SessionConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SessionConfig {
+    /// How the next session starts. `false` (the default) means Foreground —
+    /// the window stays visible; `true` means Background — the window minimizes.
+    #[serde(default)]
+    pub start_in_background: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

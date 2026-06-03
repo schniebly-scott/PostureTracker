@@ -1,10 +1,10 @@
 use iced::border::Border;
-use iced::widget::{button, column, container, row, slider, text, text_input, toggler, Space};
+use iced::widget::{column, container, row, slider, text, text_input, toggler, Space};
 use iced::{Alignment, Background, Color, Element, Length, Length::Fill};
 
 use crate::app::components::debug_stats;
 use crate::app::components::ui;
-use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, SEL, T1, T2, T3};
+use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
 
 /// State of the live-status badge, mapped to a label + accent color.
@@ -114,33 +114,6 @@ fn threshold_field(app: &App) -> Element<'_, Message> {
     column![head, track].spacing(9).into()
 }
 
-fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'_, Message> {
-    button(
-        text(label.to_string())
-            .size(13)
-            .font(ui::semibold())
-            .wrapping(text::Wrapping::None),
-    )
-    .padding([7, 10])
-    .on_press(msg)
-    .style(move |_theme, status| {
-        let (bg, tc) = if selected {
-            (Some(Background::Color(SEL)), T1)
-        } else {
-            match status {
-                button::Status::Hovered | button::Status::Pressed => (None, T1),
-                _ => (None, T3),
-            }
-        };
-        button::Style {
-            background: bg,
-            text_color: tc,
-            border: Border::default().rounded(7),
-            ..button::Style::default()
-        }
-    })
-}
-
 fn interval_field(app: &App) -> Element<'_, Message> {
     let sel = app.sample_interval_choice;
     let opts = [
@@ -153,7 +126,7 @@ fn interval_field(app: &App) -> Element<'_, Message> {
 
     let mut seg = row![].spacing(2);
     for (label, choice) in opts {
-        seg = seg.push(seg_button(
+        seg = seg.push(ui::seg_button(
             label,
             sel == choice,
             Message::SampleIntervalChoiceChanged(choice),

@@ -1,9 +1,10 @@
+use iced::border::Border;
 use iced::widget::{column, container, row, stack, text, tooltip};
-use iced::{Alignment, Element, Length, Length::Fill};
+use iced::{Alignment, Background, Element, Length, Length::Fill};
 
 use crate::app::components::ui;
-use crate::app::theme::T1;
-use crate::app::{App, CalibrationState, InferenceState, Message};
+use crate::app::theme::{ELEV, LINE, T1};
+use crate::app::{App, CalibrationState, InferenceState, Message, RunMode};
 
 /// A button label: a leading glyph plus text, sized for the button system.
 fn btn_label(glyph: &str, label: &str) -> Element<'static, Message> {
@@ -49,7 +50,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             InferenceState::Running => ui::danger_button(btn_label("\u{25A0}", "Stop Test"))
                 .on_press(Message::StopInferencePressed),
             InferenceState::Stopped | InferenceState::Unloaded => {
-                ui::primary_button(btn_label("\u{25B6}", "Test Posture"))
+                ui::secondary_button(btn_label("\u{25B6}", "Test Posture"))
                     .on_press(Message::TestPosturePressed)
             }
         };
@@ -105,16 +106,49 @@ pub fn view(app: &App) -> Element<'_, Message> {
         let start_row = if app.is_calibrated()
             && matches!(app.calibration_state, CalibrationState::Idle)
         {
+            // Segmented toggle choosing how the session starts (matches the
+            // interval control in the settings panel).
+            let toggle = container(
+                row![
+                    ui::seg_button(
+                        "Foreground",
+                        app.session_start_mode == RunMode::Foreground,
+                        Message::SessionModeSelected(RunMode::Foreground),
+                    ),
+                    ui::seg_button(
+                        "Background",
+                        app.session_start_mode == RunMode::Background,
+                        Message::SessionModeSelected(RunMode::Background),
+                    ),
+                ]
+                .spacing(2),
+            )
+            .padding(3)
+            .style(|_| container::Style {
+                background: Some(Background::Color(ELEV)),
+                border: Border {
+                    color: LINE,
+                    width: 1.0,
+                    radius: 10.0.into(),
+                },
+                ..Default::default()
+            });
+
+            // Start Session dispatches whichever start the toggle selected.
+            let start_msg = match app.session_start_mode {
+                RunMode::Background => Message::EnterBackgroundPressed,
+                RunMode::Foreground => Message::StartForegroundPressed,
+            };
+
             Some(
                 row![
-                    ui::secondary_button(glyph_label("\u{2BB9}", 18, "Background"))
+                    toggle,
+                    ui::primary_button(btn_label("\u{25B6}", "Start Session"))
                         .width(Fill)
-                        .on_press(Message::EnterBackgroundPressed),
-                    ui::secondary_button(glyph_label("\u{1F5B5}", 18, "Foreground"))
-                        .width(Fill)
-                        .on_press(Message::StartForegroundPressed),
+                        .on_press(start_msg),
                 ]
-                .spacing(10),
+                .spacing(10)
+                .align_y(Alignment::Center),
             )
         } else {
             None

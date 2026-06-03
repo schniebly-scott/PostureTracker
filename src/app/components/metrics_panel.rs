@@ -537,8 +537,15 @@ fn quick_card<'a>(
 }
 
 fn view_footer(app: &App) -> Element<'_, Message> {
-    let reset_btn = button(text("\u{21BB}").size(18))
-        .on_press(Message::MetricsResetMenuToggled)
+    let reset_btn = button(
+        row![
+            text("\u{21BB}").size(18),
+            text("Reset").size(13).font(bold()),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .on_press(Message::MetricsResetMenuToggled)
         .padding([4, 10])
         .style(|_theme, status| {
             let bg = match status {

@@ -11,7 +11,7 @@ use iced::{Background, Color, Element, Font};
 
 use crate::app::Message;
 use crate::app::theme::{
-    ELEV, GREEN, HOVER, LINE, LINE_STRONG, ON_GREEN, PANEL, RED, T1, T2, T3,
+    ELEV, GREEN, HOVER, LINE, LINE_STRONG, ON_GREEN, PANEL, RED, SEL, T1, T2, T3,
 };
 
 // ---- Fonts ----
@@ -160,7 +160,7 @@ pub fn danger_button(label: Element<'_, Message>) -> button::Button<'_, Message>
 /// Neutral filled button.
 pub fn secondary_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
     button(label)
-        .padding([14, 14])
+        .padding([12, 12])
         .style(|_theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => HOVER,
@@ -218,6 +218,35 @@ pub fn disabled_button(label: Element<'_, Message>) -> button::Button<'_, Messag
                 width: 1.0,
                 radius: 10.0.into(),
             },
+            ..button::Style::default()
+        }
+    })
+}
+
+/// One segment of a segmented pill control. `selected` paints the active fill;
+/// otherwise the segment is transparent and only brightens its text on hover.
+pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'_, Message> {
+    button(
+        text(label.to_string())
+            .size(13)
+            .font(semibold())
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([7, 10])
+    .on_press(msg)
+    .style(move |_theme, status| {
+        let (bg, tc) = if selected {
+            (Some(Background::Color(SEL)), T1)
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => (None, T1),
+                _ => (None, T3),
+            }
+        };
+        button::Style {
+            background: bg,
+            text_color: tc,
+            border: Border::default().rounded(7),
             ..button::Style::default()
         }
     })

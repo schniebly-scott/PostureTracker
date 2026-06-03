@@ -27,7 +27,8 @@ enum InferenceState {
     Running,
 }
 
-enum RunMode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunMode {
     Foreground,
     Background,
 }
@@ -142,6 +143,9 @@ pub struct App {
     bad_posture: bool,
     inference_state: InferenceState,
     run_mode: RunMode,
+    /// The mode the next session will start in, chosen via the control-panel
+    /// toggle before pressing Start Session. Persisted to config.
+    pub session_start_mode: RunMode,
 
     sample_interval_choice: SampleIntervalChoice,
     custom_interval_input: String,
@@ -186,6 +190,7 @@ pub enum Message {
     DismissAlert,
     CalibratePressed,
     CalibrationTick,
+    SessionModeSelected(RunMode),
     EnterBackgroundPressed,
     StartForegroundPressed,
     StopBackgroundPressed,
@@ -233,6 +238,11 @@ impl App {
                 bad_posture: false,
                 inference_state: InferenceState::Unloaded,
                 run_mode: RunMode::Foreground,
+                session_start_mode: if config.session.start_in_background {
+                    RunMode::Background
+                } else {
+                    RunMode::Foreground
+                },
                 sample_interval_choice,
                 custom_interval_input,
                 background_sample_count: config.background.frames_per_sample,
@@ -408,11 +418,12 @@ impl App {
                                     .unwrap_or(true);
 
                             if can_alert {
-                                self.pipelines.camera_manager.stop();
-                                self.pipelines.cv_manager.stop();
+                                // Leave the camera/CV pipeline running while the
+                                // alert is shown so we keep evaluating posture and
+                                // can auto-dismiss once it's corrected. The cooldown
+                                // is started on dismiss, not here.
                                 let (id, open) = window::open(Self::alert_window_settings());
                                 self.alert_window_id = Some(id);
-                                self.last_alert_time = Some(Instant::now());
                                 return Task::batch([open.discard(), window::maximize(id, true)]);
                             }
                         } else if self.alert_window_id.is_some() && !self.force_dismiss {
@@ -458,7 +469,6 @@ impl App {
                                 if can_alert {
                                     let (id, open) = window::open(Self::alert_window_settings());
                                     self.alert_window_id = Some(id);
-                                    self.last_alert_time = Some(Instant::now());
                                     return Task::batch([open.discard(), window::maximize(id, true)]);
                                 }
                             } else if self.alert_window_id.is_some() && !self.force_dismiss {
@@ -478,6 +488,7 @@ impl App {
                     window::close(window_id)
                 } else if self.alert_window_id == Some(window_id) {
                     self.alert_window_id = None;
+                    self.last_alert_time = Some(Instant::now());
                     window::close(window_id)
                 } else {
                     Task::none()
@@ -596,7 +607,12 @@ impl App {
                 Task::none()
             }
             Message::BackgroundSampleTick => {
-                if self.alert_window_id.is_none() && !self.pipelines.camera_manager.is_running() {
+                // Keep sampling while an alert is open only when auto-dismiss is
+                // enabled, so the next sample can detect corrected posture and
+                // close the alert. With manual dismissal we idle the camera until
+                // the user clicks.
+                let alert_blocks_sampling = self.alert_window_id.is_some() && self.force_dismiss;
+                if !alert_blocks_sampling && !self.pipelines.camera_manager.is_running() {
                     self.pipelines.camera_manager.start().ok();
                     self.pipelines.cv_manager.start().ok();
                     self.background_samples = Some(Vec::new());
@@ -605,16 +621,20 @@ impl App {
             }
             Message::DismissAlert => {
                 if let Some(id) = self.alert_window_id.take() {
-                    if matches!(self.run_mode, RunMode::Background)
-                        && self.sample_interval_secs().is_none()
-                    {
-                        self.pipelines.camera_manager.start().ok();
-                        self.pipelines.cv_manager.start().ok();
-                    }
+                    // Start the re-alert cooldown from when the alert is
+                    // dismissed, not when it opened. The pipeline was never
+                    // stopped on open, so there's nothing to restart here.
+                    self.last_alert_time = Some(Instant::now());
                     window::close(id)
                 } else {
                     Task::none()
                 }
+            }
+            Message::SessionModeSelected(mode) => {
+                self.session_start_mode = mode;
+                self.config.session.start_in_background = matches!(mode, RunMode::Background);
+                self.save_config();
+                Task::none()
             }
             Message::EnterBackgroundPressed => {
                 if self.begin_background_tracking() {
