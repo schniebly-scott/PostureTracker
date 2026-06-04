@@ -1,8 +1,6 @@
 [camera]
-device = "/dev/video0"
 
 [posture]
-baseline_deg = 90.0564
 threshold_deg = 4.5
 
 [background]
