@@ -181,12 +181,20 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .width(Fill);
 
     // Settings gear hovers in the panel's top-right corner.
-    let gear = container(ui::icon_button("\u{2699}", 16).on_press(Message::OpenSettingsPressed))
+    let gear = 
+                container(tooltip(ui::icon_button("\u{2699}", 20).on_press(Message::OpenSettingsPressed),
+                container(text("Settings").size(15).color(T1))
+                    .style(ui::tile_style)
+                    .padding([3, 10]),
+                tooltip::Position::Bottom,
+            )
+            .gap(2))
         .align_x(Alignment::End)
         .align_y(Alignment::Start)
         .width(Fill)
         .height(Length::Fixed(210.0))
-        .padding(10);
+        .padding(5);
+    
 
     stack![panel, gear].into()
 }

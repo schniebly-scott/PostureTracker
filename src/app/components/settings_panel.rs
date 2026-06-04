@@ -1,8 +1,8 @@
-use iced::widget::{button, column, container, pick_list, row, text, Space};
+use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 
-use crate::app::theme::{DARK_BLUE, LIGHT_BLUE, MID_BLUE, OWHITE};
-use crate::app::{App, Message};
+use crate::app::theme::{AMBER, DARK_BLUE, LIGHT_BLUE, MID_BLUE, OWHITE};
+use crate::app::{App, Message, MIN_ALERT_COOLDOWN_SECS};
 
 const POPUP_BG: Color = Color {
     r: 0x25 as f32 / 255.0,
@@ -44,6 +44,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
         header,
         text("Camera").size(18),
         camera_selector(app),
+        Space::new().height(Length::Fixed(8.0)),
+        text("Posture Alerts").size(18),
+        cooldown_field(app),
         Space::new().height(Length::Fixed(8.0)),
         text("Window").size(18),
         window_actions(app),
@@ -107,6 +110,47 @@ fn window_actions(app: &App) -> Element<'_, Message> {
     col = col.push(flat_button("Hide To Tray / Minimize").on_press(Message::HideMainWindowPressed));
     col = col.push(flat_button("Quit App").on_press(Message::QuitRequested));
     col.into()
+}
+
+/// Settings-page control for the alert cooldown — the minimum time before the
+/// bad-posture popup can reappear after it's dismissed.
+fn cooldown_field(app: &App) -> Element<'_, Message> {
+    let input = row![
+        text_input("60", &app.cooldown_input)
+            .on_input(Message::CooldownInputChanged)
+            .size(14)
+            .width(Length::Fixed(80.0))
+            .padding([8, 12]),
+        text("seconds").size(14),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    let mut col = column![
+        text("Minimum time before the alert can reappear after it's dismissed").size(13),
+        input,
+    ]
+    .spacing(8);
+
+    if let Some(warning) = cooldown_warning(&app.cooldown_input) {
+        col = col.push(text(warning).size(13).color(AMBER).width(Length::Fixed(FIELD_WIDTH)));
+    }
+
+    col.into()
+}
+
+/// Warning text for the cooldown field, or `None` when the input is a valid
+/// value at/above the floor.
+fn cooldown_warning(input: &str) -> Option<String> {
+    match input.trim().parse::<u64>() {
+        Ok(secs) if secs >= MIN_ALERT_COOLDOWN_SECS => None,
+        Ok(_) => Some(format!(
+            "Cooldown must be at least {MIN_ALERT_COOLDOWN_SECS} seconds — shorter \
+             values make the alert reappear before you've had time to correct your \
+             posture, so it can pop up repeatedly."
+        )),
+        Err(_) => Some("Enter a whole number of seconds.".to_string()),
+    }
 }
 
 /// Modal overlay shown at first run when no camera has been configured yet.

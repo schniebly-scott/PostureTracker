@@ -15,6 +15,9 @@ use iced::{Element, Length, Size, Subscription, Task, Theme, window};
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
 const MIN_CALIBRATION_SAMPLES: usize = 5;
+/// Floor for the alert cooldown. Below this the popup can reappear before the
+/// user has had time to correct their posture after dismissing it.
+pub const MIN_ALERT_COOLDOWN_SECS: u64 = 5;
 const MAIN_WINDOW_SIZE: Size = Size::new(1206.0, 961.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
@@ -151,6 +154,9 @@ pub struct App {
     custom_interval_input: String,
     background_sample_count: usize,
     alert_cooldown: Duration,
+    /// Raw text the user has typed into the cooldown field. `alert_cooldown` is
+    /// only updated from this once it parses to a value at/above the floor.
+    pub cooldown_input: String,
 
     background_samples: Option<Vec<Option<f32>>>,
     last_alert_time: Option<Instant>,
@@ -185,6 +191,7 @@ pub enum Message {
     PostureThresholdReleased,
     SampleIntervalChoiceChanged(SampleIntervalChoice),
     CustomIntervalInputChanged(String),
+    CooldownInputChanged(String),
     ForceDismissToggled(bool),
     BackgroundSampleTick,
     DismissAlert,
@@ -247,6 +254,7 @@ impl App {
                 custom_interval_input,
                 background_sample_count: config.background.frames_per_sample,
                 alert_cooldown: Duration::from_secs(config.background.alert_cooldown_secs),
+                cooldown_input: config.background.alert_cooldown_secs.to_string(),
                 background_samples: None,
                 last_alert_time: None,
                 force_dismiss: config.background.force_dismiss,
@@ -293,6 +301,7 @@ impl App {
             SampleIntervalChoice::Custom => self.sample_interval_secs().unwrap_or(60),
         };
         self.config.background.force_dismiss = self.force_dismiss;
+        self.config.background.alert_cooldown_secs = self.alert_cooldown.as_secs();
         if let Err(e) = self.config.save(CONFIG_PATH) {
             eprintln!("Failed to save config: {e}");
         }
@@ -599,6 +608,19 @@ impl App {
                 self.sample_interval_choice = SampleIntervalChoice::Custom;
                 self.custom_interval_input = input;
                 self.save_config();
+                Task::none()
+            }
+            Message::CooldownInputChanged(input) => {
+                self.cooldown_input = input;
+                // Only commit values at/above the floor. Too-low or invalid
+                // input keeps the last valid cooldown while the settings page
+                // shows a warning.
+                if let Ok(secs) = self.cooldown_input.trim().parse::<u64>() {
+                    if secs >= MIN_ALERT_COOLDOWN_SECS {
+                        self.alert_cooldown = Duration::from_secs(secs);
+                        self.save_config();
+                    }
+                }
                 Task::none()
             }
             Message::ForceDismissToggled(value) => {

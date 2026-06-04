@@ -8,11 +8,11 @@ threshold_deg = 4.5
 [background]
 interval_secs = 0
 frames_per_sample = 3
-alert_cooldown_secs = 60
-force_dismiss = false
+alert_cooldown_secs = 5
+force_dismiss = true
 
 [metrics]
 history_days_to_keep = 30
 
 [session]
-start_in_background = false
+start_in_background = true
