@@ -623,3 +623,210 @@ fn parse_log_totals(path: &Path) -> (u32, f64, f64) {
 
     (breaks, bad_secs, tracked_secs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Builds a MetricsStore with all fields zeroed and no log file attached, so
+    /// getters/transitions can be exercised deterministically without touching the
+    /// real data directory (append_log is a no-op when log_file is None).
+    fn empty_store(data_dir: PathBuf) -> MetricsStore {
+        MetricsStore {
+            angle_history: VecDeque::new(),
+            breaks_today: 0,
+            bad_posture_secs_today: 0.0,
+            tracked_secs_today: 0.0,
+            breaks_session: 0,
+            bad_posture_secs_session: 0.0,
+            tracked_secs_session: 0.0,
+            session_started_at: None,
+            bad_posture_session_since: None,
+            tracking_since: None,
+            bad_posture_since: None,
+            streak_since: None,
+            last_broke_at: None,
+            today: Local::now().date_naive(),
+            keep_days: 30,
+            all_time: AllTimeTotals::default(),
+            all_time_path: data_dir.join(ALL_TIME_FILE),
+            data_dir,
+            log_file: None,
+        }
+    }
+
+    fn write_log(path: &Path, lines: &[&str]) {
+        let mut f = File::create(path).unwrap();
+        for line in lines {
+            writeln!(f, "{line}").unwrap();
+        }
+    }
+
+    // --- parse_log_totals ---
+
+    #[test]
+    fn parse_log_totals_computes_durations_and_breaks() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("day.log");
+        write_log(
+            &path,
+            &["1000,Start", "2000,GoodToBad", "3000,BadToGood", "4000,Stop"],
+        );
+
+        let (breaks, bad, tracked) = parse_log_totals(&path);
+        assert_eq!(breaks, 1);
+        assert!((bad - 1.0).abs() < 1e-9, "bad secs: {bad}");
+        assert!((tracked - 3.0).abs() < 1e-9, "tracked secs: {tracked}");
+    }
+
+    #[test]
+    fn parse_log_totals_missing_file_is_zero() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.log");
+        assert_eq!(parse_log_totals(&path), (0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn parse_log_totals_skips_malformed_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("messy.log");
+        write_log(
+            &path,
+            &[
+                "garbage",       // no comma
+                "abc,Start",     // non-numeric timestamp
+                "1000,Start",    // valid
+                "2000,Unknown",  // unknown event, ignored
+                "5000,Stop",     // valid
+            ],
+        );
+
+        let (breaks, bad, tracked) = parse_log_totals(&path);
+        assert_eq!(breaks, 0);
+        assert_eq!(bad, 0.0);
+        assert!((tracked - 4.0).abs() < 1e-9, "tracked secs: {tracked}");
+    }
+
+    #[test]
+    fn parse_log_totals_clamps_negative_deltas() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("backwards.log");
+        // Stop earlier than Start => delta would be negative, must clamp to 0.
+        write_log(&path, &["5000,Start", "1000,Stop"]);
+
+        let (_, _, tracked) = parse_log_totals(&path);
+        assert_eq!(tracked, 0.0);
+    }
+
+    // --- posture_quality getters ---
+
+    #[test]
+    fn posture_quality_today_is_one_when_untracked() {
+        let dir = tempdir().unwrap();
+        let store = empty_store(dir.path().to_path_buf());
+        assert_eq!(store.posture_quality_today(), 1.0);
+    }
+
+    #[test]
+    fn posture_quality_today_reflects_bad_ratio() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.tracked_secs_today = 10.0;
+
+        store.bad_posture_secs_today = 5.0;
+        assert!((store.posture_quality_today() - 0.5).abs() < 1e-6);
+
+        store.bad_posture_secs_today = 10.0;
+        assert_eq!(store.posture_quality_today(), 0.0);
+    }
+
+    #[test]
+    fn posture_quality_today_clamps_when_bad_exceeds_tracked() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.tracked_secs_today = 10.0;
+        store.bad_posture_secs_today = 20.0;
+        assert_eq!(store.posture_quality_today(), 0.0);
+    }
+
+    #[test]
+    fn posture_quality_session_reflects_bad_ratio() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.tracked_secs_session = 8.0;
+        store.bad_posture_secs_session = 2.0;
+        assert!((store.posture_quality_session() - 0.75).abs() < 1e-6);
+    }
+
+    // --- all-time getters ---
+
+    #[test]
+    fn all_time_days_tracked_counts_today_only_when_active() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.all_time.days_tracked = 3;
+
+        // No tracking today yet.
+        assert_eq!(store.all_time_days_tracked(), 3);
+
+        // Some tracked time today => +1.
+        store.tracked_secs_today = 10.0;
+        assert_eq!(store.all_time_days_tracked(), 4);
+    }
+
+    #[test]
+    fn all_time_breaks_adds_today_running_count() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.all_time.breaks = 5;
+        store.breaks_today = 2;
+        assert_eq!(store.all_time_breaks(), 7);
+    }
+
+    #[test]
+    fn all_time_tracked_duration_adds_today() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.all_time.tracked_secs = 100.0;
+        store.tracked_secs_today = 10.0;
+        let total = store.all_time_tracked_duration().as_secs_f64();
+        assert!((total - 110.0).abs() < 1e-6, "total tracked: {total}");
+    }
+
+    // --- ingest transitions ---
+
+    #[test]
+    fn ingest_counts_break_on_good_to_bad_then_clears() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        // Activate a session so counters advance.
+        let now = Instant::now();
+        store.session_started_at = Some(now);
+        store.tracking_since = Some(now);
+
+        store.ingest(Some(30.0), true); // good -> bad edge
+        assert_eq!(store.breaks_today(), 1);
+        assert_eq!(store.breaks_session(), 1);
+        assert!(store.bad_posture_since.is_some());
+
+        store.ingest(Some(30.0), true); // still bad, no new break
+        assert_eq!(store.breaks_today(), 1);
+
+        store.ingest(Some(5.0), false); // bad -> good edge
+        assert!(store.bad_posture_since.is_none());
+        assert!(store.streak_since.is_some());
+    }
+
+    #[test]
+    fn ingest_freezes_counters_without_active_session() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        // No session active.
+        store.ingest(Some(30.0), true);
+
+        assert_eq!(store.breaks_today(), 0);
+        // The angle chart still records the sample regardless of session state.
+        assert_eq!(store.angle_history.len(), 1);
+    }
+}

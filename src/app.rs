@@ -924,3 +924,60 @@ fn interval_choice_from_secs(secs: u64) -> (SampleIntervalChoice, String) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_category_labels() {
+        assert_eq!(MetricsCategory::Daily.label(), "Daily");
+        assert_eq!(MetricsCategory::Session.label(), "This Session");
+        assert_eq!(MetricsCategory::AllTime.label(), "All Time");
+        assert_eq!(MetricsCategory::QuickView.label(), "Quick View");
+    }
+
+    #[test]
+    fn metrics_category_cycle_wraps_full_circle() {
+        // Stepping Right through all four variants returns to the start.
+        let mut c = MetricsCategory::Daily;
+        for _ in 0..4 {
+            c = c.cycle(SlideDirection::Right);
+        }
+        assert_eq!(c, MetricsCategory::Daily);
+    }
+
+    #[test]
+    fn metrics_category_cycle_left_is_inverse_of_right() {
+        let c = MetricsCategory::Session;
+        let round_trip = c.cycle(SlideDirection::Right).cycle(SlideDirection::Left);
+        assert_eq!(round_trip, c);
+    }
+
+    #[test]
+    fn metrics_category_cycle_direction_order() {
+        assert_eq!(
+            MetricsCategory::Daily.cycle(SlideDirection::Right),
+            MetricsCategory::Session
+        );
+        assert_eq!(
+            MetricsCategory::Daily.cycle(SlideDirection::Left),
+            MetricsCategory::QuickView
+        );
+    }
+
+    #[test]
+    fn interval_choice_maps_known_intervals() {
+        assert_eq!(interval_choice_from_secs(0).0, SampleIntervalChoice::Constant);
+        assert_eq!(interval_choice_from_secs(30).0, SampleIntervalChoice::Secs30);
+        assert_eq!(interval_choice_from_secs(60).0, SampleIntervalChoice::Min1);
+        assert_eq!(interval_choice_from_secs(300).0, SampleIntervalChoice::Min5);
+    }
+
+    #[test]
+    fn interval_choice_custom_carries_minutes_string() {
+        let (choice, text) = interval_choice_from_secs(120);
+        assert_eq!(choice, SampleIntervalChoice::Custom);
+        assert_eq!(text, "2");
+    }
+}

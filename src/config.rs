@@ -112,3 +112,39 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn posture_config_defaults() {
+        let c = PostureConfig::default();
+        assert_eq!(c.baseline_deg, None);
+        assert_eq!(c.threshold_deg, 12.0);
+    }
+
+    #[test]
+    fn background_config_defaults() {
+        let c = BackgroundConfig::default();
+        assert_eq!(c.interval_secs, 60);
+        assert_eq!(c.frames_per_sample, 3);
+        assert_eq!(c.alert_cooldown_secs, 60);
+        assert!(c.force_dismiss);
+    }
+
+    #[test]
+    fn metrics_and_session_defaults() {
+        assert_eq!(MetricsConfig::default().history_days_to_keep, 30);
+        assert!(!SessionConfig::default().start_in_background);
+        assert_eq!(CameraConfig::default().device, None);
+    }
+
+    #[test]
+    fn full_config_default_composes_subdefaults() {
+        let c = Config::default();
+        assert_eq!(c.posture.threshold_deg, 12.0);
+        assert_eq!(c.background.interval_secs, 60);
+        assert_eq!(c.metrics.history_days_to_keep, 30);
+    }
+}

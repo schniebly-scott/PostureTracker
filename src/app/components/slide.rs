@@ -192,3 +192,25 @@ impl<'a, Message: 'a> From<Slide<'a, Message>> for Element<'a, Message, Theme, R
         Element::new(slide)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ease_out_cubic;
+
+    #[test]
+    fn ease_out_cubic_endpoints() {
+        assert!((ease_out_cubic(0.0) - 0.0).abs() < 1e-6);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ease_out_cubic_is_monotonic_increasing() {
+        let mut prev = ease_out_cubic(0.0);
+        for i in 1..=10 {
+            let t = i as f32 / 10.0;
+            let v = ease_out_cubic(t);
+            assert!(v >= prev, "easing should not decrease: {prev} -> {v}");
+            prev = v;
+        }
+    }
+}

@@ -42,3 +42,64 @@ impl<T: Clone> ServiceCore<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal ManagedService implementation so the trait's default methods can be
+    /// exercised with a real ServiceCore (no async runtime required).
+    struct DummyService {
+        core: ServiceCore<u32>,
+    }
+
+    impl ManagedService for DummyService {
+        type Output = u32;
+
+        fn core(&self) -> &ServiceCore<Self::Output> {
+            &self.core
+        }
+
+        fn start(&self) -> Result<(), Box<dyn Error>> {
+            self.core.running.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn service_core_starts_not_running() {
+        let core = ServiceCore::<u32>::new(4);
+        assert!(!core.running.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn broadcast_delivers_to_subscriber() {
+        let core = ServiceCore::<u32>::new(4);
+        let mut rx = core.tx.subscribe();
+        core.tx.send(42).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), 42);
+    }
+
+    #[test]
+    fn managed_service_lifecycle_methods() {
+        let svc = DummyService {
+            core: ServiceCore::new(4),
+        };
+
+        assert!(!svc.is_running());
+        svc.start().unwrap();
+        assert!(svc.is_running());
+        svc.stop();
+        assert!(!svc.is_running());
+    }
+
+    #[test]
+    fn managed_service_subscribe_receives_messages() {
+        let svc = DummyService {
+            core: ServiceCore::new(4),
+        };
+        let mut rx = svc.subscribe();
+        svc.core().tx.send(7).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), 7);
+    }
+}

@@ -65,3 +65,41 @@ pub const INF_HEIGHT: usize = 640;
 pub const CONFIDENCE_THRESHOLD: f32 = 0.05;
 pub const KEEP_KEYPOINTS: [usize; 3] = [0, 5, 6];
 pub static MODEL_BYTES: &[u8] = include_bytes!("../yolov8n-pose.onnx");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keypoint_constants_match_coco_layout() {
+        // nose, left_shoulder, right_shoulder — the three points posture math relies on.
+        assert_eq!(KEEP_KEYPOINTS, [0, 5, 6]);
+        assert_eq!(KPT_START, 5);
+    }
+
+    #[test]
+    fn inference_dimensions_are_square_640() {
+        assert_eq!(INF_WIDTH, 640);
+        assert_eq!(INF_HEIGHT, 640);
+    }
+
+    #[test]
+    fn confidence_threshold_is_expected() {
+        assert_eq!(CONFIDENCE_THRESHOLD, 0.05);
+    }
+
+    #[test]
+    fn skeleton_indices_are_within_keypoint_array() {
+        // Every edge must reference a valid index into the 17-element Keypoints array,
+        // otherwise draw_skeleton would panic at runtime.
+        for &(i, j) in SKELETON {
+            assert!(i < 17, "skeleton edge start {i} out of range");
+            assert!(j < 17, "skeleton edge end {j} out of range");
+        }
+    }
+
+    #[test]
+    fn model_bytes_are_embedded() {
+        assert!(!MODEL_BYTES.is_empty(), "ONNX model should be embedded");
+    }
+}

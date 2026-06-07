@@ -220,3 +220,181 @@ impl PoseTask {
         self.render_pose(result, width, height)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array3;
+
+    /// Builds a Keypoints array with only nose (0), left shoulder (5) and right
+    /// shoulder (6) set — the three points posture_angle_deg actually reads.
+    fn keypoints(
+        nose: Option<(f32, f32, f32)>,
+        left: Option<(f32, f32, f32)>,
+        right: Option<(f32, f32, f32)>,
+    ) -> Keypoints {
+        let mut kp: Keypoints = [None; 17];
+        kp[0] = nose;
+        kp[5] = left;
+        kp[6] = right;
+        kp
+    }
+
+    #[test]
+    fn angle_is_90_degrees_for_symmetric_shoulders() {
+        // Nose at origin, shoulders at (-1,1) and (1,1): vectors are perpendicular.
+        let task = PoseTask::new();
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((-1.0, 1.0, 1.0)),
+            Some((1.0, 1.0, 1.0)),
+        );
+        let angle = task.posture_angle_deg(&kp).expect("angle should be Some");
+        assert!((angle - 90.0).abs() < 1e-3, "expected ~90°, got {angle}");
+    }
+
+    #[test]
+    fn angle_is_0_degrees_for_parallel_vectors() {
+        let task = PoseTask::new();
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((1.0, 1.0, 1.0)),
+            Some((2.0, 2.0, 1.0)),
+        );
+        let angle = task.posture_angle_deg(&kp).expect("angle should be Some");
+        assert!(angle.abs() < 1e-3, "expected ~0°, got {angle}");
+    }
+
+    #[test]
+    fn angle_is_180_degrees_for_opposite_vectors() {
+        let task = PoseTask::new();
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((-1.0, 0.0, 1.0)),
+            Some((1.0, 0.0, 1.0)),
+        );
+        let angle = task.posture_angle_deg(&kp).expect("angle should be Some");
+        assert!((angle - 180.0).abs() < 1e-3, "expected ~180°, got {angle}");
+    }
+
+    #[test]
+    fn angle_is_none_when_keypoint_missing() {
+        let task = PoseTask::new();
+        let kp = keypoints(Some((0.0, 0.0, 1.0)), None, Some((1.0, 1.0, 1.0)));
+        assert!(task.posture_angle_deg(&kp).is_none());
+    }
+
+    #[test]
+    fn angle_is_none_when_confidence_below_threshold() {
+        let task = PoseTask::new();
+        // Left shoulder confidence below CONFIDENCE_THRESHOLD (0.05).
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((-1.0, 1.0, 0.01)),
+            Some((1.0, 1.0, 1.0)),
+        );
+        assert!(task.posture_angle_deg(&kp).is_none());
+    }
+
+    #[test]
+    fn angle_is_none_for_zero_magnitude_vector() {
+        let task = PoseTask::new();
+        // Left shoulder coincident with nose => zero-length vector.
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((0.0, 0.0, 1.0)),
+            Some((1.0, 1.0, 1.0)),
+        );
+        assert!(task.posture_angle_deg(&kp).is_none());
+    }
+
+    #[test]
+    fn angle_never_nan_for_near_collinear_inputs() {
+        // Floating point can push cos(theta) slightly past 1.0; the clamp must
+        // prevent acos from returning NaN.
+        let task = PoseTask::new();
+        let kp = keypoints(
+            Some((0.0, 0.0, 1.0)),
+            Some((1.000001, 1.0, 1.0)),
+            Some((1.0, 1.0, 1.0)),
+        );
+        let angle = task.posture_angle_deg(&kp).expect("angle should be Some");
+        assert!(!angle.is_nan(), "angle should not be NaN");
+    }
+
+    #[test]
+    fn preprocess_rgba_produces_normalized_nchw_tensor() {
+        let task = PoseTask::new();
+        // 2x2 solid red image (R=255, G=0, B=0, A=255).
+        let rgba: Vec<u8> = [255u8, 0, 0, 255].repeat(4);
+        let out = task.preprocess_rgba(&rgba, 2, 2);
+
+        assert_eq!(out.shape(), &[1, 3, INF_HEIGHT, INF_WIDTH]);
+
+        // R channel normalized to 1.0, G and B to 0.0 at an interior pixel.
+        assert!((out[[0, 0, 100, 100]] - 1.0).abs() < 1e-6);
+        assert_eq!(out[[0, 1, 100, 100]], 0.0);
+        assert_eq!(out[[0, 2, 100, 100]], 0.0);
+
+        // All values within the normalized range.
+        for &v in out.iter() {
+            assert!((0.0..=1.0).contains(&v), "value {v} outside [0,1]");
+        }
+    }
+
+    #[test]
+    fn decode_yolo_pose_extracts_and_scales_best_detection() {
+        let task = PoseTask::new();
+        // Output tensor shape [1, 56, 8400]: 4 bbox + 1 conf + 17*3 keypoints.
+        let mut preds = Array3::<f32>::zeros((1, 56, 8400));
+
+        // Detection 0: high confidence, will be selected.
+        preds[[0, 4, 0]] = 0.9;
+        // nose (k=0): base = KPT_START + 0*3 = 5
+        preds[[0, 5, 0]] = 100.0; // x
+        preds[[0, 6, 0]] = 50.0; // y
+        preds[[0, 7, 0]] = 0.8; // conf
+        // left shoulder (k=5): base = 5 + 15 = 20
+        preds[[0, 20, 0]] = 10.0;
+        preds[[0, 21, 0]] = 20.0;
+        preds[[0, 22, 0]] = 0.7;
+
+        // Detection 1: lower confidence, should be ignored.
+        preds[[0, 4, 1]] = 0.3;
+        preds[[0, 5, 1]] = 999.0;
+
+        // orig 1280x640 => scale_x = 2.0, scale_y = 1.0
+        let kp = task
+            .decode_yolo_pose(preds.view(), 1280, 640)
+            .expect("should decode");
+
+        let (x, y, conf) = kp[0].expect("nose present");
+        assert!((x - 200.0).abs() < 1e-3, "nose x scaled: {x}");
+        assert!((y - 50.0).abs() < 1e-3, "nose y scaled: {y}");
+        assert!((conf - 0.8).abs() < 1e-6);
+
+        let (lx, ly, _) = kp[5].expect("left shoulder present");
+        assert!((lx - 20.0).abs() < 1e-3, "left x scaled: {lx}");
+        assert!((ly - 20.0).abs() < 1e-3, "left y scaled: {ly}");
+    }
+
+    #[test]
+    fn decode_yolo_pose_errors_when_no_detections() {
+        let task = PoseTask::new();
+        // All confidences are 0 => no detection above best_conf=0.0.
+        let preds = Array3::<f32>::zeros((1, 56, 8400));
+        assert!(task.decode_yolo_pose(preds.view(), 640, 640).is_err());
+    }
+
+    #[test]
+    fn render_returns_rgba_buffer_of_expected_size() {
+        let task = PoseTask::new();
+        let kp = keypoints(
+            Some((2.0, 2.0, 1.0)),
+            Some((1.0, 5.0, 1.0)),
+            Some((8.0, 5.0, 1.0)),
+        );
+        let out = task.render(&kp, 10, 10);
+        assert_eq!(out.len(), 10 * 10 * 4);
+    }
+}
