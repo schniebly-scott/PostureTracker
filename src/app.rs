@@ -5,7 +5,7 @@ mod tray;
 
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, PostureConfig};
+use crate::config::{config_path, Config, PostureConfig};
 use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
@@ -21,7 +21,6 @@ pub const MIN_ALERT_COOLDOWN_SECS: u64 = 5;
 const MAIN_WINDOW_SIZE: Size = Size::new(1206.0, 961.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
-const CONFIG_PATH: &str = "config.toml";
 
 #[derive(PartialEq)]
 enum InferenceState {
@@ -302,7 +301,7 @@ impl App {
         };
         self.config.background.force_dismiss = self.force_dismiss;
         self.config.background.alert_cooldown_secs = self.alert_cooldown.as_secs();
-        if let Err(e) = self.config.save(CONFIG_PATH) {
+        if let Err(e) = self.config.save(config_path()) {
             eprintln!("Failed to save config: {e}");
         }
     }

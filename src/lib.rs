@@ -23,7 +23,7 @@ pub struct Pipelines {
 }
 
 pub fn new_app_state() -> (Config, Pipelines) {
-    let config = Config::load_or_default("config.toml");
+    let config = Config::load_or_default(config::config_path());
 
     let shared_frame: SharedFrame = Arc::new(Mutex::new(None));
     let camera_manager = Arc::new(CameraManager::new(config.camera.clone(), shared_frame.clone()));

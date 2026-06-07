@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
@@ -96,6 +99,17 @@ impl Default for MetricsConfig {
     }
 }
 
+/// Standard location for the config file: the OS config directory plus
+/// `posturetracker/config.toml` (e.g. `~/.config/posturetracker/config.toml`
+/// on Linux). Falls back to `config.toml` in the current directory if the
+/// platform config directory can't be determined.
+pub fn config_path() -> PathBuf {
+    match dirs::config_dir() {
+        Some(dir) => dir.join("posturetracker").join("config.toml"),
+        None => PathBuf::from("config.toml"),
+    }
+}
+
 impl Config {
     /// Load from disk, falling back to defaults if the file is missing or unparseable.
     /// Missing sections within an existing file are filled by `#[serde(default)]`.
@@ -107,6 +121,10 @@ impl Config {
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+        }
         let toml = toml::to_string_pretty(self)?;
         fs::write(path, toml)?;
         Ok(())
