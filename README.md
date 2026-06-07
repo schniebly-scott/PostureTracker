@@ -12,10 +12,8 @@ A local desktop application for tracking your posture while working on a compute
 Claude Code was used in the development of this application. It made it much easier to create a good looking UI without spending too much time reading documentation. Future updates will be mostly human written code and core functionalities of the application are mostly human written.
 
 ## Process
-
-<img width="300" height="212" alt="image" src="https://github.com/user-attachments/assets/86ed8294-d495-41f4-a7cc-07b02c6bff5c" />
-
 **UI Rough Draft in LibreOffice**
+<img width="300" height="212" alt="image" src="https://github.com/user-attachments/assets/86ed8294-d495-41f4-a7cc-07b02c6bff5c" />
 
 **Rust Library Test Project**
 Link: [rust-webcam-model-bench](https://github.com/schniebly-scott/rust-webcam-model-bench)
