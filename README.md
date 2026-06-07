@@ -2,7 +2,7 @@
 
 A local desktop application for tracking your posture while working on a computer with a webcam. The goals are accuracy, low-resource usage, and intuitive UI.
 
-<img width="1206" height="963" alt="image" src="https://github.com/user-attachments/assets/cc1fad3f-7db7-4add-828b-4574a993ccf5" />
+<img width="1206" height="963" alt="Screenshot From 2026-06-03 17-14-09" src="https://github.com/user-attachments/assets/5ecfe4c7-3b25-446c-9271-73dec11348a3" />
 
 ## Built With
 - Made entirely in Rust, mainly using the ort library for inference and iced for the UI.
