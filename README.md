@@ -13,6 +13,7 @@ Claude Code was used in the development of this application. It made it much eas
 
 ## Process
 **UI Rough Draft in LibreOffice**
+
 <img width="300" height="212" alt="image" src="https://github.com/user-attachments/assets/86ed8294-d495-41f4-a7cc-07b02c6bff5c" />
 
 **Rust Library Test Project**
