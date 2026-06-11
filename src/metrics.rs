@@ -819,6 +819,37 @@ mod tests {
     }
 
     #[test]
+    fn reset_today_zeroes_daily_counters() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.breaks_today = 5;
+        store.bad_posture_secs_today = 10.0;
+        store.tracked_secs_today = 20.0;
+        store.last_broke_at = Some(Instant::now());
+
+        store.reset_today();
+
+        assert_eq!(store.breaks_today(), 0);
+        assert_eq!(store.bad_posture_duration_today().as_secs_f64(), 0.0);
+        assert_eq!(store.tracked_duration_today().as_secs_f64(), 0.0);
+        assert!(store.time_since_last_break().is_none());
+    }
+
+    #[test]
+    fn reset_session_zeroes_session_counters() {
+        let dir = tempdir().unwrap();
+        let mut store = empty_store(dir.path().to_path_buf());
+        store.breaks_session = 3;
+        store.bad_posture_secs_session = 7.0;
+        store.tracked_secs_session = 14.0;
+
+        store.reset_session();
+
+        assert_eq!(store.breaks_session(), 0);
+        assert_eq!(store.bad_posture_duration_session().as_secs_f64(), 0.0);
+    }
+
+    #[test]
     fn ingest_freezes_counters_without_active_session() {
         let dir = tempdir().unwrap();
         let mut store = empty_store(dir.path().to_path_buf());

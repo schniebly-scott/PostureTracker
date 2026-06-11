@@ -731,7 +731,9 @@ impl App {
                     MetricsCategory::Daily => self.metrics.reset_today(),
                     MetricsCategory::Session => self.metrics.reset_session(),
                     MetricsCategory::AllTime => self.metrics.reset_all_time(),
-                    MetricsCategory::QuickView => self.metrics.reset_session(),
+                    // QuickView surfaces today's metrics (breaks today, streak,
+                    // posture quality today), so it must reset the daily buckets.
+                    MetricsCategory::QuickView => self.metrics.reset_today(),
                 }
                 self.metrics_reset_open = false;
                 Task::none()

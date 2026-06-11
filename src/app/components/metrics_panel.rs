@@ -80,9 +80,9 @@ const POPUP_BG: Color = Color {
 pub fn view(app: &App) -> Element<'_, Message> {
     let header = view_header(app.metrics_category);
     let body = view_body(app);
-    let footer = view_footer(app);
+    let footer = view_footer();
 
-    container(
+    let panel = container(
         column![header, body, footer]
             .spacing(10)
             .width(Length::Fill)
@@ -92,8 +92,22 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .padding(16)
     .width(Length::Fill)
     .height(Length::Fill)
-    .clip(true)
-    .into()
+    .clip(true);
+
+    if app.metrics_reset_open {
+        // Anchor the confirm popup over the full panel. The panel is the stack's
+        // first (sizing) layer, so the popup gets the whole panel area to lay out
+        // in rather than being clipped to the short footer row.
+        let overlay = container(reset_popup(app.metrics_category))
+            .align_x(Alignment::End)
+            .align_y(Alignment::End)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([56, 16]);
+        stack![panel, overlay].into()
+    } else {
+        panel.into()
+    }
 }
 
 fn view_header(category: MetricsCategory) -> Element<'static, Message> {
@@ -536,7 +550,7 @@ fn quick_card<'a>(
         .into()
 }
 
-fn view_footer(app: &App) -> Element<'_, Message> {
+fn view_footer() -> Element<'static, Message> {
     let reset_btn = button(
         row![
             text("\u{21BB}").size(18),
@@ -562,20 +576,10 @@ fn view_footer(app: &App) -> Element<'_, Message> {
             }
         });
 
-    let base = row![Space::new().width(Length::Fill), reset_btn]
+    row![Space::new().width(Length::Fill), reset_btn]
         .width(Length::Fill)
-        .align_y(Alignment::Center);
-
-    if app.metrics_reset_open {
-        let popup = reset_popup(app.metrics_category);
-        let overlay = container(popup)
-            .align_x(Alignment::End)
-            .align_y(Alignment::End)
-            .width(Length::Fill);
-        stack![base, overlay].into()
-    } else {
-        base.into()
-    }
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn reset_popup(category: MetricsCategory) -> Element<'static, Message> {
