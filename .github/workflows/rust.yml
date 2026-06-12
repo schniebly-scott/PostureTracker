@@ -26,9 +26,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: windows-x86_64
           - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: macos-x86_64
-          - os: macos-latest
             target: aarch64-apple-darwin
             artifact: macos-aarch64
 
@@ -48,7 +45,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Install Linux GUI deps
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -67,15 +64,15 @@ jobs:
 
       # ---------- Linux: build .deb package ----------
       - name: Install cargo-deb
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: cargo install cargo-deb --locked
 
       - name: Build .deb package
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: cargo deb --target ${{ matrix.target }} --no-build
 
       - name: Upload .deb artifact
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.artifact }}-deb
@@ -83,14 +80,14 @@ jobs:
 
       # ---------- Linux: raw binary (in addition to .deb) ----------
       - name: Package Linux binary
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }} dist/
           tar -czf dist/${{ env.BIN_NAME }}-${{ matrix.artifact }}.tar.gz -C dist ${{ env.BIN_NAME }}
 
       - name: Upload Linux binary artifact
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.artifact }}-binary
