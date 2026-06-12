@@ -27,17 +27,28 @@ impl CameraWorker {
             .as_deref()
             .ok_or("No camera device configured")?;
 
-        // ccap can't decode the camera's default MJPEG (it renders as green
-        // static / colored bars) and won't switch the device format itself.
-        // Put the device into raw YUYV first; ccap then captures and converts
-        // it to RGBA cleanly. Webcams commonly reset to MJPEG across reboots,
-        // so we do this every time rather than relying on the device default.
+        // Linux only: ccap can't decode the camera's default MJPEG (it renders
+        // as green static / colored bars) and won't switch the device format
+        // itself. Put the device into raw YUYV at the capture resolution first;
+        // ccap then captures and converts it to RGBA cleanly. Webcams commonly
+        // reset to MJPEG across reboots, so we do this every time rather than
+        // relying on the device default. On Windows/macOS this is a no-op.
         if !crate::camera::set_capture_format(device) {
             eprintln!("Warning: could not set {device} to YUYV; capture may be corrupted");
         }
 
         let mut camera = Provider::with_device_name(device)?;
         camera.set_pixel_format(ccap::PixelFormat::Rgba32)?;
+
+        // Off Linux the V4L2 ioctl above didn't pick the resolution, so request
+        // it from ccap. Best-effort: we read the actual size back below either
+        // way, so a camera that rejects it just runs at its native resolution.
+        #[cfg(not(target_os = "linux"))]
+        if let Err(e) =
+            camera.set_resolution(crate::camera::CAPTURE_WIDTH, crate::camera::CAPTURE_HEIGHT)
+        {
+            eprintln!("Warning: could not set capture resolution: {e}");
+        }
 
         let width = camera.get_property(PropertyName::Width)? as u32;
         let height = camera.get_property(PropertyName::Height)? as u32;

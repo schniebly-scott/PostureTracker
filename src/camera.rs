@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 pub use cam_service::{CameraManager, RgbaBuffer};
 
-/// A selectable camera: a human-readable label plus the `/dev/videoN` path that
-/// the capture worker opens.
+/// A selectable camera: a human-readable label plus the identifier that the
+/// capture worker opens — a `/dev/videoN` path on Linux, the device name as
+/// reported by the OS capture framework on Windows/macOS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CameraOption {
     pub label: String,
@@ -27,6 +28,7 @@ impl std::fmt::Display for CameraOption {
 /// `Provider::with_device_name`. Instead we scan `/dev/video*`, query each node
 /// with the V4L2 `QUERYCAP` ioctl, and keep only the ones that actually support
 /// video capture — storing the `/dev/videoN` path, which opens reliably.
+#[cfg(target_os = "linux")]
 pub fn list_cameras() -> Vec<CameraOption> {
     let mut nodes: Vec<(u32, String)> = match std::fs::read_dir("/dev") {
         Ok(entries) => entries
@@ -65,8 +67,61 @@ pub fn list_cameras() -> Vec<CameraOption> {
     options
 }
 
+/// Enumerate capture-capable cameras on the system.
+///
+/// On Windows (DirectShow) and macOS (AVFoundation) the framework-reported
+/// device name is the identifier `Provider::with_device_name` expects, so we
+/// can use ccap's enumeration directly. We call the low-level
+/// `ccap_provider_find_device_names_list` binding rather than
+/// `Provider::get_devices()` because the latter opens every device to query
+/// its capabilities — which can fail or steal a camera that's mid-capture.
+#[cfg(not(target_os = "linux"))]
+pub fn list_cameras() -> Vec<CameraOption> {
+    use ccap::sys;
+
+    let mut names: Vec<String> = Vec::new();
+    // Safety: create/destroy of an unopened provider plus a query into a
+    // correctly-sized, default-initialized out-struct, per the ccap C API.
+    unsafe {
+        let provider = sys::ccap_provider_create();
+        if provider.is_null() {
+            eprintln!("Failed to create ccap provider for camera enumeration");
+            return Vec::new();
+        }
+        let mut list = sys::CcapDeviceNamesList::default();
+        if sys::ccap_provider_find_device_names_list(provider, &mut list) {
+            for i in 0..list.deviceCount {
+                let bytes = &list.deviceNames[i];
+                let cstr = std::ffi::CStr::from_ptr(bytes.as_ptr());
+                let name = cstr.to_string_lossy().trim().to_string();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+        sys::ccap_provider_destroy(provider);
+    }
+
+    // Disambiguate identical models: ccap opens devices by name, so duplicate
+    // labels are kept distinct for the user even though they select the same
+    // underlying name.
+    let mut options: Vec<CameraOption> = Vec::new();
+    for name in names {
+        let dup_count = options.iter().filter(|o| o.path == name).count();
+        let label = if dup_count > 0 {
+            format!("{name} ({})", dup_count + 1)
+        } else {
+            name.clone()
+        };
+        options.push(CameraOption { label, path: name });
+    }
+
+    options
+}
+
 /// Minimal V4L2 `VIDIOC_QUERYCAP` binding used to detect capture-capable nodes
 /// and read a device's friendly name without pulling in a v4l crate.
+#[cfg(target_os = "linux")]
 mod v4l2 {
     use std::ffi::CString;
     use std::os::raw::c_void;
@@ -170,8 +225,16 @@ pub const CAPTURE_WIDTH: u32 = 640;
 pub const CAPTURE_HEIGHT: u32 = 480;
 
 /// Put the given V4L2 device into YUYV mode before capture. See [`v4l2::set_yuyv`].
+#[cfg(target_os = "linux")]
 pub fn set_capture_format(device: &str) -> bool {
     v4l2::set_yuyv(device, CAPTURE_WIDTH, CAPTURE_HEIGHT)
+}
+
+/// No-op off Linux: AVFoundation/DirectShow negotiate the capture format
+/// themselves, so the V4L2 MJPEG workaround doesn't apply.
+#[cfg(not(target_os = "linux"))]
+pub fn set_capture_format(_device: &str) -> bool {
+    true
 }
 
 /// RGBA frame sent to the UI
