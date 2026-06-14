@@ -69,10 +69,7 @@ impl CameraWorker {
                         };
                         rgba.copy_from_slice(data);
 
-                        let buf = RgbaBuffer {
-                            data: rgba,
-                            pool: pool.clone(),
-                        };
+                        let buf = RgbaBuffer::pooled(rgba, pool.clone());
 
                         let captured_frame: Frame = (width, height, Arc::new(buf));
 
