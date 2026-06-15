@@ -9,9 +9,27 @@ use iced::widget::image;
 use tokio::sync::broadcast;
 
 use crate::Frame;
+use crate::camera::RgbaBuffer;
 use crate::cv::{Inference, TimeMetrics};
 use crate::utils::ManagedService;
 use crate::{camera::CameraManager, cv::CVManager};
+
+/// Wraps a pooled `RgbaBuffer` so its pixels can back a zero-copy
+/// `bytes::Bytes` (and thus an `image::Handle`) without cloning. The pooled
+/// buffer returns to the pool only once iced drops the resulting `Handle`.
+struct FrameBytes(Arc<RgbaBuffer>);
+
+impl AsRef<[u8]> for FrameBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.data
+    }
+}
+
+/// Build an `image::Handle` that borrows the pooled frame buffer instead of
+/// copying its pixels.
+fn frame_handle(frame: Frame) -> image::Handle {
+    image::Handle::from_rgba(frame.0, frame.1, bytes::Bytes::from_owner(FrameBytes(frame.2)))
+}
 
 /* ============================
 Camera Subscription
@@ -48,7 +66,7 @@ impl iced_subscription::Recipe for CameraSubscription {
 
         let s = async_stream::stream! {
             while let Ok(frame) = rx.recv().await {
-                yield image::Handle::from_rgba(frame.0, frame.1, frame.2.data.clone());
+                yield frame_handle(frame);
             }
         };
         Box::pin(s)
@@ -93,9 +111,8 @@ impl iced_subscription::Recipe for CVSubscription {
 
         let s = async_stream::stream! {
             while let Ok(inference) = rx.recv().await {
-                let frame = inference.frame;
                 yield (
-                    image::Handle::from_rgba(frame.0, frame.1, frame.2.data.clone()),
+                    frame_handle(inference.frame),
                     inference.time_metrics,
                     inference.posture_angle_deg,
                 );

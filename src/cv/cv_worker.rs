@@ -37,11 +37,11 @@ impl CVWorker {
                 };
 
                 if let Some(frame) = frame_opt {
-                    // ---------- Extract RGBA ----------
-                    let (width, height, rgba) = (frame.0, frame.1, frame.2.data.clone());
+                    // ---------- Extract dimensions (borrow pixels directly) ----------
+                    let (width, height) = (frame.0, frame.1);
 
                     // ---------- Inference ----------
-                    let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&rgba, width, height)
+                    let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&frame.2.data, width, height)
                     {
                         Ok(o) => o,
                         Err(e) => {

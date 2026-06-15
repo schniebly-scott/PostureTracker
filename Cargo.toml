@@ -13,6 +13,7 @@ iced = { version = "0.14", features = [
 tray-icon = { version = "0.19", default-features = false }
 tokio = { version = "1", features = ["full"] }
 async-stream = "0.3"
+bytes = "1"
 ndarray = "0.17.2"
 image = "0.25.9"
 ort = "2.0.0-rc.11"
