@@ -6,6 +6,11 @@ use crate::app::components::ui;
 use crate::app::theme::{ELEV, LINE, T1};
 use crate::app::{App, CalibrationState, InferenceState, Message, RunMode};
 
+/// Fixed height the control panel reserves so the layout stays stable when the
+/// calibrate / start buttons appear mid-session. The panel and its gear
+/// overlay (in the same `stack!`) must share this value to stay aligned.
+const PANEL_HEIGHT: f32 = 210.0;
+
 /// A button label: a leading glyph plus text, sized for the button system.
 fn btn_label(glyph: &str, label: &str) -> Element<'static, Message> {
     glyph_label(glyph, 14, label)
@@ -177,7 +182,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .padding(16)
         // Fixed height so the panel reserves room for the calibrate / start
         // buttons that appear mid-session, keeping the layout stable.
-        .height(Length::Fixed(210.0))
+        .height(Length::Fixed(PANEL_HEIGHT))
         .width(Fill);
 
     // Settings gear hovers in the panel's top-right corner.
@@ -192,7 +197,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .align_x(Alignment::End)
         .align_y(Alignment::Start)
         .width(Fill)
-        .height(Length::Fixed(210.0))
+        .height(Length::Fixed(PANEL_HEIGHT))
         .padding(5);
     
 
