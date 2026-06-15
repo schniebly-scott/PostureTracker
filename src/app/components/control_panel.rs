@@ -19,15 +19,16 @@ fn btn_label(glyph: &str, label: &str) -> Element<'static, Message> {
 /// Like [`btn_label`] but with an explicit glyph size — used for the icon
 /// glyphs that need to read larger than the surrounding text.
 ///
-/// Both texts share a fixed line height so the label's vertical extent is
-/// identical no matter which glyph is used; that keeps every button the same
-/// height (otherwise e.g. ■ and ▶ would size their buttons differently).
-/// The whole label is centered horizontally for a balanced full-width button.
+/// The glyph comes from the bundled icon font ([`ui::icon`]), so every icon
+/// has the same advance and baseline on every OS. Both texts still share one
+/// fixed line height so the label's vertical extent doesn't shift between the
+/// icon and the Inter label, keeping every button the same height. The whole
+/// label is centered horizontally for a balanced full-width button.
 fn glyph_label(glyph: &str, glyph_size: u16, label: &str) -> Element<'static, Message> {
     let line = text::LineHeight::Absolute(20.0.into());
     container(
         row![
-            text(glyph.to_string()).size(glyph_size as f32).line_height(line),
+            ui::icon(glyph, glyph_size).line_height(line),
             text(label.to_string())
                 .size(14)
                 .font(ui::semibold())
@@ -44,7 +45,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let content = if app.is_background_mode() {
         column![
             ui::micro_label("Session"),
-            ui::danger_button(btn_label("\u{25A0}", "Stop Tracking"))
+            ui::danger_button(btn_label(ui::glyph::STOP, "Stop Tracking"))
                 .width(Fill)
                 .on_press(Message::StopBackgroundPressed),
         ]
@@ -52,10 +53,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         // Slot 1 — the primary session action.
         let test_button = match app.inference_state {
-            InferenceState::Running => ui::danger_button(btn_label("\u{25A0}", "Stop Test"))
+            InferenceState::Running => ui::danger_button(btn_label(ui::glyph::STOP, "Stop Test"))
                 .on_press(Message::StopInferencePressed),
             InferenceState::Stopped | InferenceState::Unloaded => {
-                ui::secondary_button(btn_label("\u{25B6}", "Test Posture"))
+                ui::secondary_button(btn_label(ui::glyph::PLAY, "Test Posture"))
                     .on_press(Message::TestPosturePressed)
             }
         };
@@ -70,7 +71,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             == InferenceState::Running
         {
             match &app.calibration_state {
-                CalibrationState::Idle => ui::ghost_button(btn_label("\u{25CE}", calibrate_label))
+                CalibrationState::Idle => ui::ghost_button(btn_label(ui::glyph::TARGET, calibrate_label))
                     .width(Fill)
                     .on_press(Message::CalibratePressed)
                     .into(),
@@ -96,7 +97,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         } else {
             // No test running — show the calibrate button greyed out (no on_press)
             // with a tooltip on hover explaining why it can't be used yet.
-            let btn = ui::disabled_button(btn_label("\u{25CE}", calibrate_label)).width(Fill);
+            let btn = ui::disabled_button(btn_label(ui::glyph::TARGET, calibrate_label)).width(Fill);
             tooltip(
                 btn,
                 container(text("Start a test to calibrate your baseline").size(13).color(T1))
@@ -148,7 +149,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             Some(
                 row![
                     toggle,
-                    ui::primary_button(btn_label("\u{25B6}", "Start Session"))
+                    ui::primary_button(btn_label(ui::glyph::PLAY, "Start Session"))
                         .width(Fill)
                         .on_press(start_msg),
                 ]
@@ -187,7 +188,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     // Settings gear hovers in the panel's top-right corner.
     let gear = 
-                container(tooltip(ui::icon_button("\u{2699}", 20).on_press(Message::OpenSettingsPressed),
+                container(tooltip(ui::icon_button(ui::glyph::GEAR, 20).on_press(Message::OpenSettingsPressed),
                 container(text("Settings").size(15).color(T1))
                     .style(ui::tile_style)
                     .padding([3, 10]),

@@ -15,18 +15,88 @@ use crate::app::theme::{
 };
 
 // ---- Fonts ----
+//
+// Every face the app renders with is bundled and loaded at startup (see
+// `app::run`), so glyphs never depend on per-OS system-font fallback. That
+// fallback is what made the old geometric/dingbat "icons" render at different
+// widths and baselines on Linux/Windows/macOS. Text is Inter, numbers are
+// JetBrains Mono, and icons are a tiny purpose-built [`ICON_FONT`] — see
+// [`icon`] and [`glyph`].
+
+/// Inter (regular weight) — the app's default text font, set via
+/// `default_font` in `app::run`. Loaded from [`INTER_REGULAR`].
+pub const INTER: Font = Font::with_name("Inter");
+
+/// JetBrains Mono — bundled monospace used for every number so values read
+/// instantly. Loaded from [`JETBRAINS_MONO`].
+pub const MONO: Font = Font::with_name("JetBrains Mono");
+
+/// Bundled icon font holding only the handful of UI glyphs the app uses, so
+/// each renders identically on every OS. Reach it through [`icon`], not by
+/// naming a raw glyph in a default-font `text`.
+pub const ICONS: Font = Font::with_name("Posture Icons");
+
+/// Raw bytes for the bundled fonts. `app::run` hands these to iced's font
+/// loader; keep that list in sync with these constants.
+pub const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+pub const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+pub const INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.ttf");
+pub const JETBRAINS_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
+pub const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/PostureIcons.ttf");
 
 pub fn semibold() -> Font {
     Font {
         weight: Weight::Semibold,
-        ..Font::default()
+        ..INTER
     }
 }
 
-/// JetBrains-Mono stand-in: iced's built-in monospace, used for every number
-/// so values read instantly.
+pub fn bold() -> Font {
+    Font {
+        weight: Weight::Bold,
+        ..INTER
+    }
+}
+
+/// Bundled JetBrains Mono, used for every number so values read instantly.
 pub fn mono() -> Font {
-    Font::MONOSPACE
+    MONO
+}
+
+// ---- Icons ----
+//
+// The canonical name for every UI glyph. Routing all icon usage through these
+// constants and [`icon`] keeps raw `\u{...}` strings out of the panels — a raw
+// glyph in a default-font `text` would resolve via system fallback and reopen
+// the cross-platform inconsistency this module exists to prevent.
+pub mod glyph {
+    pub const STOP: &str = "\u{25A0}"; // ■  stop tracking / stop test
+    pub const PLAY: &str = "\u{25B6}"; // ▶  test / start session
+    pub const TARGET: &str = "\u{25CE}"; // ◎  calibrate
+    pub const GEAR: &str = "\u{2699}"; // ⚙  settings
+    pub const CAMERA: &str = "\u{25A3}"; // ▣  idle camera
+    pub const CLOCK: &str = "\u{25F7}"; // ◷  elapsed / total time
+    pub const TRIANGLE: &str = "\u{25B3}"; // △  breaks
+    pub const CROSS: &str = "\u{2715}"; // ✕  bad time
+    pub const DISC: &str = "\u{25CF}"; // ●  active streak
+    pub const CIRCLE: &str = "\u{25CB}"; // ○  no streak
+    pub const HALF_DISC: &str = "\u{25D0}"; // ◐  since break
+    pub const BARS: &str = "\u{2261}"; // ≡  posture quality
+    pub const GRID: &str = "\u{25A4}"; // ▤  days tracked
+    pub const TREND_UP: &str = "\u{2197}"; // ↗  average per day
+    pub const REFRESH: &str = "\u{21BB}"; // ↻  reset
+    pub const CHEVRON_LEFT: &str = "\u{2039}"; // ‹  previous category
+    pub const CHEVRON_RIGHT: &str = "\u{203A}"; // ›  next category
+}
+
+/// An icon glyph rendered in the bundled [`ICONS`] font at `size`. Set the
+/// color on the returned text as usual. Always build icons through this helper
+/// (or [`icon_button`]) rather than putting a glyph in a plain `text`.
+pub fn icon(glyph: &str, size: u16) -> text::Text<'static> {
+    text(glyph.to_string())
+        .size(size as f32)
+        .font(ICONS)
+        .wrapping(text::Wrapping::None)
 }
 
 // ---- Color helpers ----
@@ -253,8 +323,8 @@ pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'
 }
 
 /// Quiet square icon button for toolbars / titlebar.
-pub fn icon_button(glyph: &str, size: u16) -> button::Button<'_, Message> {
-    button(text(glyph).size(size as f32).color(T3))
+pub fn icon_button(glyph: &str, size: u16) -> button::Button<'static, Message> {
+    button(icon(glyph, size).color(T3))
         .padding([6, 8])
         .style(|_theme, status| {
             let (bg, text_color) = match status {

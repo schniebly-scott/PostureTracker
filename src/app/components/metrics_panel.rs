@@ -85,12 +85,12 @@ fn view_header(category: MetricsCategory) -> Element<'static, Message> {
         }
     };
 
-    let left = button(text("\u{2039}").size(28).font(ui::semibold()))
+    let left = button(ui::icon(ui::glyph::CHEVRON_LEFT, 28))
         .on_press(Message::MetricsCategoryCycled(SlideDirection::Left))
         .style(arrow_style)
         .padding([0, 10]);
 
-    let right = button(text("\u{203A}").size(28).font(ui::semibold()))
+    let right = button(ui::icon(ui::glyph::CHEVRON_RIGHT, 28))
         .on_press(Message::MetricsCategoryCycled(SlideDirection::Right))
         .style(arrow_style)
         .padding([0, 10]);
@@ -139,16 +139,16 @@ fn view_category(app: &App, category: MetricsCategory) -> Element<'_, Message> {
 fn view_daily(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "TOTAL TIME TODAY",
         fmt_duration_long(m.tracked_duration_today()),
         GREEN,
     );
 
     let row_a = row![
-        secondary_card("\u{25B3}", "Breaks", m.breaks_today().to_string(), false),
+        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_today().to_string(), false),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.bad_posture_duration_today()),
             true,
@@ -159,13 +159,13 @@ fn view_daily(app: &App) -> Element<'_, Message> {
     let streak = m.good_posture_streak();
     let row_b = row![
         secondary_card(
-            if streak.is_some() { "\u{25CF}" } else { "\u{25CB}" },
+            if streak.is_some() { ui::glyph::DISC } else { ui::glyph::CIRCLE },
             "Streak",
             fmt_duration(streak),
             false,
         ),
         secondary_card(
-            "\u{25D0}",
+            ui::glyph::HALF_DISC,
             "Since break",
             fmt_duration(m.time_since_last_break()),
             false,
@@ -190,16 +190,16 @@ fn view_session(app: &App) -> Element<'_, Message> {
     };
 
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "SESSION LENGTH",
         primary_value,
         if session_active { GREEN } else { T1 },
     );
 
     let row_a = row![
-        secondary_card("\u{25B3}", "Breaks", m.breaks_session().to_string(), false),
+        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_session().to_string(), false),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.bad_posture_duration_session()),
             true,
@@ -211,8 +211,8 @@ fn view_session(app: &App) -> Element<'_, Message> {
     let quality_card = container(
         row![
             row![
-                text("\u{2261}").size(13),
-                text("Posture Quality").size(12).color(Color { a: 0.75, ..T1 }),
+                ui::icon(ui::glyph::BARS, 13),
+                text("Posture Quality").size(12).color(Color { a: 0.75, ..OWHITE }),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -250,7 +250,7 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
 
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "LIFETIME TRACKED",
         fmt_duration_long(m.all_time_tracked_duration()),
         GREEN,
@@ -258,13 +258,13 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
 
     let row_a = row![
         secondary_card(
-            "\u{25B3}",
+            ui::glyph::TRIANGLE,
             "Lifetime breaks",
             m.all_time_breaks().to_string(),
             false,
         ),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.all_time_bad_posture_duration()),
             true,
@@ -280,8 +280,8 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
     };
 
     let row_b = row![
-        secondary_card("\u{25A4}", "Days tracked", days.to_string(), false),
-        secondary_card("\u{2197}", "Avg breaks/day", avg_breaks, false),
+        secondary_card(ui::glyph::GRID, "Days tracked", days.to_string(), false),
+        secondary_card(ui::glyph::TREND_UP, "Avg breaks/day", avg_breaks, false),
     ]
     .spacing(8);
 
@@ -297,7 +297,7 @@ fn view_quick(app: &App) -> Element<'_, Message> {
     let streak = m.good_posture_streak();
     let streak_ok = streak.is_some();
     let streak_card = quick_card(
-        if streak_ok { "\u{25CF}" } else { "\u{25CB}" },
+        if streak_ok { ui::glyph::DISC } else { ui::glyph::CIRCLE },
         "STREAK",
         fmt_duration(streak),
         None,
@@ -306,7 +306,7 @@ fn view_quick(app: &App) -> Element<'_, Message> {
 
     let breaks = m.breaks_today();
     let breaks_card = quick_card(
-        "\u{25B3}",
+        ui::glyph::TRIANGLE,
         "BREAKS TODAY",
         breaks.to_string(),
         None,
@@ -322,7 +322,7 @@ fn view_quick(app: &App) -> Element<'_, Message> {
         RED
     };
     let quality_card = quick_card(
-        "\u{2261}",
+        ui::glyph::BARS,
         "POSTURE QUALITY",
         format!("{:.0}%", quality * 100.0),
         Some(quality),
@@ -336,14 +336,14 @@ fn view_quick(app: &App) -> Element<'_, Message> {
 }
 
 fn primary_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     accent: Color,
 ) -> Element<'a, Message> {
     let label_block = row![
-        text(icon).size(18),
-        text(label).size(12).font(ui::semibold()).color(Color {
+        ui::icon(glyph, 18),
+        text(label).size(12).font(bold()).color(Color {
             a: 0.75,
             ..T1
         }),
@@ -393,7 +393,7 @@ fn primary_card<'a>(
 }
 
 fn secondary_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     is_bad: bool,
@@ -407,8 +407,8 @@ fn secondary_card<'a>(
     container(
         row![
             row![
-                text(icon).size(13).color(T1),
-                text(label).size(12).color(T1),
+                ui::icon(glyph, 13).color(OWHITE),
+                text(label).size(12).color(OWHITE),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -439,15 +439,15 @@ fn secondary_card<'a>(
 }
 
 fn quick_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     progress: Option<f32>,
     accent: Color,
 ) -> Element<'a, Message> {
     let label_block = row![
-        text(icon).size(18).color(accent),
-        text(label).size(12).font(ui::semibold()).color(Color {
+        ui::icon(glyph, 18).color(accent),
+        text(label).size(12).font(bold()).color(Color {
             a: 0.75,
             ..T1
         }),
@@ -514,8 +514,8 @@ fn quick_card<'a>(
 fn view_footer() -> Element<'static, Message> {
     let reset_btn = button(
         row![
-            text("\u{21BB}").size(18),
-            text("Reset").size(13).font(ui::semibold()),
+            ui::icon(ui::glyph::REFRESH, 18),
+            text("Reset").size(13).font(bold()),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
