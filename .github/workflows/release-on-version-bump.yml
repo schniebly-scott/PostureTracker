@@ -1,0 +1,52 @@
+name: Release on version bump
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if Cargo.toml version changed
+        id: version_check
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version\s*=\s*"(.*)"/\1/')
+
+          # Get version from previous commit
+          git show HEAD~1:Cargo.toml > /tmp/prev_cargo.toml 2>/dev/null || echo "" > /tmp/prev_cargo.toml
+          PREV_VERSION=$(grep -m1 '^version' /tmp/prev_cargo.toml | sed -E 's/version\s*=\s*"(.*)"/\1/' || echo "")
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Previous version: $PREV_VERSION"
+
+          if [ "$CURRENT_VERSION" != "$PREV_VERSION" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and release
+        if: steps.version_check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version_check.outputs.version }}"
+          TAG="v${VERSION}"
+
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes

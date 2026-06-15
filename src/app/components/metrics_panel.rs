@@ -1,14 +1,20 @@
 use std::time::Duration;
 
 use iced::border::Border;
-use iced::font::Weight;
 use iced::widget::{button, column, container, progress_bar, row, stack, text, Space};
-use iced::{Alignment, Background, Color, Element, Font, Length};
+use iced::{Alignment, Background, Color, Element, Length, Padding};
 
 use crate::app::components::slide::slide;
 use crate::app::components::ui;
-use crate::app::theme::{DARK_BLUE, LIGHT_BLUE, LINE, MID_BLUE, OWHITE, WARNING_RED};
+use crate::app::theme::{ELEV, GREEN, HOVER, LINE, PANEL, RED, T1};
 use crate::app::{App, MetricsCategory, Message, SlideDirection};
+
+/// Height the footer row reserves. The reset popup floats just above it, so
+/// the popup's bottom offset is derived from this rather than a magic number.
+const FOOTER_HEIGHT: f32 = 30.0;
+
+/// Vertical gap between body, footer, and the floating popup.
+const PANEL_SPACING: f32 = 10.0;
 
 fn fmt_duration(d: Option<Duration>) -> String {
     let Some(d) = d else {
@@ -37,46 +43,6 @@ fn fmt_duration_long(d: Duration) -> String {
     }
 }
 
-fn bold() -> Font {
-    Font {
-        weight: Weight::Bold,
-        ..Font::default()
-    }
-}
-
-fn lighten(color: Color, amount: f32) -> Color {
-    Color {
-        r: (color.r + amount).min(1.0),
-        g: (color.g + amount).min(1.0),
-        b: (color.b + amount).min(1.0),
-        a: color.a,
-    }
-}
-
-// Raised tile surface (matches the new design's ELEV token).
-const CARD_BG: Color = Color {
-    r: 0x23 as f32 / 255.0,
-    g: 0x28 as f32 / 255.0,
-    b: 0x2F as f32 / 255.0,
-    a: 1.0,
-};
-
-// Hero card — a touch lighter than the tiles so it still leads (HOVER token).
-const PRIMARY_BG: Color = Color {
-    r: 0x2A as f32 / 255.0,
-    g: 0x30 as f32 / 255.0,
-    b: 0x38 as f32 / 255.0,
-    a: 1.0,
-};
-
-// Reset popup surface (PANEL token).
-const POPUP_BG: Color = Color {
-    r: 0x1B as f32 / 255.0,
-    g: 0x1F as f32 / 255.0,
-    b: 0x25 as f32 / 255.0,
-    a: 1.0,
-};
-
 pub fn view(app: &App) -> Element<'_, Message> {
     let header = view_header(app.metrics_category);
     let body = view_body(app);
@@ -84,7 +50,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let panel = container(
         column![header, body, footer]
-            .spacing(10)
+            .spacing(PANEL_SPACING)
             .width(Length::Fill)
             .height(Length::Fill),
     )
@@ -95,15 +61,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .clip(true);
 
     if app.metrics_reset_open {
-        // Anchor the confirm popup over the full panel. The panel is the stack's
-        // first (sizing) layer, so the popup gets the whole panel area to lay out
-        // in rather than being clipped to the short footer row.
+        // Float the confirm popup over the full panel (the panel is the stack's
+        // first/sizing layer, so the popup gets the whole panel area to lay out
+        // in rather than being clipped to the short footer row). Anchor it to
+        // the bottom-right and lift it clear of the footer by the footer's own
+        // height plus the column spacing — no magic offset to keep in sync.
         let overlay = container(reset_popup(app.metrics_category))
             .align_x(Alignment::End)
             .align_y(Alignment::End)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding([56, 16]);
+            .padding(Padding::ZERO.right(16.0).bottom(FOOTER_HEIGHT + PANEL_SPACING));
         stack![panel, overlay].into()
     } else {
         panel.into()
@@ -118,23 +86,23 @@ fn view_header(category: MetricsCategory) -> Element<'static, Message> {
         };
         button::Style {
             background: None,
-            text_color: Color { a: alpha, ..OWHITE },
+            text_color: Color { a: alpha, ..T1 },
             border: Border::default().rounded(4),
             ..button::Style::default()
         }
     };
 
-    let left = button(text("\u{2039}").size(28).font(bold()))
+    let left = button(ui::icon(ui::glyph::CHEVRON_LEFT, 28))
         .on_press(Message::MetricsCategoryCycled(SlideDirection::Left))
         .style(arrow_style)
         .padding([0, 10]);
 
-    let right = button(text("\u{203A}").size(28).font(bold()))
+    let right = button(ui::icon(ui::glyph::CHEVRON_RIGHT, 28))
         .on_press(Message::MetricsCategoryCycled(SlideDirection::Right))
         .style(arrow_style)
         .padding([0, 10]);
 
-    let title = text(category.label()).size(22).font(bold());
+    let title = text(category.label()).size(22).font(ui::semibold());
 
     row![
         left,
@@ -178,16 +146,16 @@ fn view_category(app: &App, category: MetricsCategory) -> Element<'_, Message> {
 fn view_daily(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "TOTAL TIME TODAY",
         fmt_duration_long(m.tracked_duration_today()),
-        LIGHT_BLUE,
+        GREEN,
     );
 
     let row_a = row![
-        secondary_card("\u{25B3}", "Breaks", m.breaks_today().to_string(), false),
+        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_today().to_string(), false),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.bad_posture_duration_today()),
             true,
@@ -198,13 +166,13 @@ fn view_daily(app: &App) -> Element<'_, Message> {
     let streak = m.good_posture_streak();
     let row_b = row![
         secondary_card(
-            if streak.is_some() { "\u{25CF}" } else { "\u{25CB}" },
+            if streak.is_some() { ui::glyph::DISC } else { ui::glyph::CIRCLE },
             "Streak",
             fmt_duration(streak),
             false,
         ),
         secondary_card(
-            "\u{25D0}",
+            ui::glyph::HALF_DISC,
             "Since break",
             fmt_duration(m.time_since_last_break()),
             false,
@@ -229,16 +197,16 @@ fn view_session(app: &App) -> Element<'_, Message> {
     };
 
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "SESSION LENGTH",
         primary_value,
-        if session_active { LIGHT_BLUE } else { OWHITE },
+        if session_active { GREEN } else { T1 },
     );
 
     let row_a = row![
-        secondary_card("\u{25B3}", "Breaks", m.breaks_session().to_string(), false),
+        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_session().to_string(), false),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.bad_posture_duration_session()),
             true,
@@ -250,8 +218,8 @@ fn view_session(app: &App) -> Element<'_, Message> {
     let quality_card = container(
         row![
             row![
-                text("\u{2261}").size(13),
-                text("Posture Quality").size(12).color(Color { a: 0.75, ..OWHITE }),
+                ui::icon(ui::glyph::BARS, 13),
+                text("Posture Quality").size(12).color(Color { a: 0.75, ..T1 }),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -259,7 +227,7 @@ fn view_session(app: &App) -> Element<'_, Message> {
             progress_bar(0.0..=1.0, quality).length(100).girth(8),
             text(format!("{:.0}%", quality * 100.0))
                 .size(16)
-                .font(bold())
+                .font(ui::semibold())
                 .wrapping(iced::widget::text::Wrapping::None),
         ]
         .spacing(10)
@@ -270,7 +238,7 @@ fn view_session(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .clip(true)
     .style(|_| container::Style {
-        background: Some(Background::Color(CARD_BG)),
+        background: Some(Background::Color(ELEV)),
         border: Border {
             color: LINE,
             width: 1.0,
@@ -289,21 +257,21 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
 
     let primary = primary_card(
-        "\u{25F7}",
+        ui::glyph::CLOCK,
         "LIFETIME TRACKED",
         fmt_duration_long(m.all_time_tracked_duration()),
-        LIGHT_BLUE,
+        GREEN,
     );
 
     let row_a = row![
         secondary_card(
-            "\u{25B3}",
+            ui::glyph::TRIANGLE,
             "Lifetime breaks",
             m.all_time_breaks().to_string(),
             false,
         ),
         secondary_card(
-            "\u{2715}",
+            ui::glyph::CROSS,
             "Bad time",
             fmt_duration_long(m.all_time_bad_posture_duration()),
             true,
@@ -319,8 +287,8 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
     };
 
     let row_b = row![
-        secondary_card("\u{25A4}", "Days tracked", days.to_string(), false),
-        secondary_card("\u{2197}", "Avg breaks/day", avg_breaks, false),
+        secondary_card(ui::glyph::GRID, "Days tracked", days.to_string(), false),
+        secondary_card(ui::glyph::TREND_UP, "Avg breaks/day", avg_breaks, false),
     ]
     .spacing(8);
 
@@ -336,32 +304,32 @@ fn view_quick(app: &App) -> Element<'_, Message> {
     let streak = m.good_posture_streak();
     let streak_ok = streak.is_some();
     let streak_card = quick_card(
-        if streak_ok { "\u{25CF}" } else { "\u{25CB}" },
+        if streak_ok { ui::glyph::DISC } else { ui::glyph::CIRCLE },
         "STREAK",
         fmt_duration(streak),
         None,
-        if streak_ok { LIGHT_BLUE } else { WARNING_RED },
+        if streak_ok { GREEN } else { RED },
     );
 
     let breaks = m.breaks_today();
     let breaks_card = quick_card(
-        "\u{25B3}",
+        ui::glyph::TRIANGLE,
         "BREAKS TODAY",
         breaks.to_string(),
         None,
-        if breaks == 0 { LIGHT_BLUE } else { WARNING_RED },
+        if breaks == 0 { GREEN } else { RED },
     );
 
     let quality = m.posture_quality_today();
     let quality_color = if quality >= 0.8 {
-        LIGHT_BLUE
+        GREEN
     } else if quality >= 0.5 {
-        OWHITE
+        T1
     } else {
-        WARNING_RED
+        RED
     };
     let quality_card = quick_card(
-        "\u{2261}",
+        ui::glyph::BARS,
         "POSTURE QUALITY",
         format!("{:.0}%", quality * 100.0),
         Some(quality),
@@ -375,16 +343,16 @@ fn view_quick(app: &App) -> Element<'_, Message> {
 }
 
 fn primary_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     accent: Color,
 ) -> Element<'a, Message> {
     let label_block = row![
-        text(icon).size(18),
-        text(label).size(12).font(bold()).color(Color {
+        ui::icon(glyph, 18),
+        text(label).size(12).font(ui::bold()).color(Color {
             a: 0.75,
-            ..OWHITE
+            ..T1
         }),
     ]
     .spacing(8)
@@ -392,7 +360,7 @@ fn primary_card<'a>(
 
     let value_text = text(value)
         .size(23)
-        .font(bold())
+        .font(ui::semibold())
         .wrapping(iced::widget::text::Wrapping::None);
 
     let card = container(
@@ -408,7 +376,7 @@ fn primary_card<'a>(
     .padding([12, 14])
     .width(Length::Fill)
     .style(move |_| container::Style {
-        background: Some(Background::Color(PRIMARY_BG)),
+        background: Some(Background::Color(HOVER)),
         border: Border {
             color: LINE,
             width: 1.0,
@@ -432,29 +400,29 @@ fn primary_card<'a>(
 }
 
 fn secondary_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     is_bad: bool,
 ) -> Element<'a, Message> {
     let value_color = if is_bad {
-        lighten(WARNING_RED, 0.05)
+        ui::mix(RED, Color::WHITE, 0.05)
     } else {
-        OWHITE
+        T1
     };
 
     container(
         row![
             row![
-                text(icon).size(13).color(OWHITE),
-                text(label).size(12).color(OWHITE),
+                ui::icon(glyph, 13).color(T1),
+                text(label).size(12).color(T1),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
             Space::new().width(Length::Fill),
             text(value)
                 .size(17)
-                .font(bold())
+                .font(ui::semibold())
                 .color(value_color)
                 .wrapping(iced::widget::text::Wrapping::None),
         ]
@@ -466,7 +434,7 @@ fn secondary_card<'a>(
     .width(Length::Fill)
     .clip(true)
     .style(|_| container::Style {
-        background: Some(Background::Color(CARD_BG)),
+        background: Some(Background::Color(ELEV)),
         border: Border {
             color: LINE,
             width: 1.0,
@@ -478,17 +446,17 @@ fn secondary_card<'a>(
 }
 
 fn quick_card<'a>(
-    icon: &'a str,
+    glyph: &'a str,
     label: &'a str,
     value: String,
     progress: Option<f32>,
     accent: Color,
 ) -> Element<'a, Message> {
     let label_block = row![
-        text(icon).size(18).color(accent),
-        text(label).size(12).font(bold()).color(Color {
+        ui::icon(glyph, 18).color(accent),
+        text(label).size(12).font(ui::bold()).color(Color {
             a: 0.75,
-            ..OWHITE
+            ..T1
         }),
     ]
     .spacing(8)
@@ -496,7 +464,7 @@ fn quick_card<'a>(
 
     let value_text = text(value)
         .size(24)
-        .font(bold())
+        .font(ui::semibold())
         .wrapping(iced::widget::text::Wrapping::None);
 
     let inner: Element<'_, Message> = if let Some(p) = progress {
@@ -527,7 +495,7 @@ fn quick_card<'a>(
         .width(Length::Fill)
         .clip(true)
         .style(|_| container::Style {
-            background: Some(Background::Color(PRIMARY_BG)),
+            background: Some(Background::Color(HOVER)),
             border: Border {
                 color: LINE,
                 width: 1.0,
@@ -553,8 +521,8 @@ fn quick_card<'a>(
 fn view_footer() -> Element<'static, Message> {
     let reset_btn = button(
         row![
-            text("\u{21BB}").size(18),
-            text("Reset").size(13).font(bold()),
+            ui::icon(ui::glyph::REFRESH, 18),
+            text("Reset").size(13).font(ui::bold()),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -564,20 +532,21 @@ fn view_footer() -> Element<'static, Message> {
         .style(|_theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => {
-                    Color { a: 0.6, ..DARK_BLUE }
+                    Color { a: 0.6, ..PANEL }
                 }
-                _ => Color { a: 0.3, ..DARK_BLUE },
+                _ => Color { a: 0.3, ..PANEL },
             };
             button::Style {
                 background: Some(Background::Color(bg)),
-                text_color: OWHITE,
+                text_color: T1,
                 border: Border::default().rounded(6),
                 ..button::Style::default()
             }
         });
 
-    row![Space::new().width(Length::Fill), reset_btn]
+    container(row![Space::new().width(Length::Fill), reset_btn].align_y(Alignment::Center))
         .width(Length::Fill)
+        .height(Length::Fixed(FOOTER_HEIGHT))
         .align_y(Alignment::Center)
         .into()
 }
@@ -588,28 +557,28 @@ fn reset_popup(category: MetricsCategory) -> Element<'static, Message> {
         .padding([4, 10])
         .style(|_theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => MID_BLUE,
-                _ => DARK_BLUE,
+                button::Status::Hovered | button::Status::Pressed => ELEV,
+                _ => PANEL,
             };
             button::Style {
                 background: Some(Background::Color(bg)),
-                text_color: OWHITE,
+                text_color: T1,
                 border: Border::default().rounded(4),
                 ..button::Style::default()
             }
         });
 
-    let confirm = button(text("Reset").size(13).font(bold()))
+    let confirm = button(text("Reset").size(13).font(ui::semibold()))
         .on_press(Message::MetricsResetConfirmed)
         .padding([4, 10])
         .style(|_theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => lighten(WARNING_RED, 0.05),
-                _ => WARNING_RED,
+                button::Status::Hovered | button::Status::Pressed => ui::mix(RED, Color::WHITE, 0.05),
+                _ => RED,
             };
             button::Style {
                 background: Some(Background::Color(bg)),
-                text_color: OWHITE,
+                text_color: T1,
                 border: Border::default().rounded(4),
                 ..button::Style::default()
             }
@@ -619,14 +588,14 @@ fn reset_popup(category: MetricsCategory) -> Element<'static, Message> {
         column![
             text(format!("Reset {}?", category.label()))
                 .size(13)
-                .font(bold()),
+                .font(ui::semibold()),
             row![cancel, confirm].spacing(8),
         ]
         .spacing(8),
     )
     .padding(10)
     .style(|_| container::Style {
-        background: Some(Background::Color(POPUP_BG)),
+        background: Some(Background::Color(PANEL)),
         border: Border {
             color: LINE,
             width: 1.0,

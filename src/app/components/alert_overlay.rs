@@ -1,7 +1,7 @@
 use iced::widget::{column, container, mouse_area, text};
 use iced::{Background, Element, Length::Fill};
 
-use crate::app::theme::WARNING_RED;
+use crate::app::theme::RED;
 use crate::app::{App, Message};
 
 pub fn view(_app: &App) -> Element<'_, Message> {
@@ -15,7 +15,7 @@ pub fn view(_app: &App) -> Element<'_, Message> {
     mouse_area(
         container(content)
             .style(|_| container::Style {
-                background: Some(Background::Color(WARNING_RED)),
+                background: Some(Background::Color(RED)),
                 ..Default::default()
             })
             .center_x(Fill)

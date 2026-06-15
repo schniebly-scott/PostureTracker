@@ -18,7 +18,10 @@ const MIN_CALIBRATION_SAMPLES: usize = 5;
 /// Floor for the alert cooldown. Below this the popup can reappear before the
 /// user has had time to correct their posture after dismissing it.
 pub const MIN_ALERT_COOLDOWN_SECS: u64 = 5;
-const MAIN_WINDOW_SIZE: Size = Size::new(1206.0, 961.0);
+const MAIN_WINDOW_SIZE: Size = Size::new(1100.0, 860.0);
+/// Floor that keeps every panel reachable on small/scaled displays (e.g. a
+/// 1366×768 panel, or a 1080p screen at 150 % giving 1280×720 logical px).
+const MAIN_WINDOW_MIN_SIZE: Size = Size::new(980.0, 640.0);
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 
@@ -115,6 +118,8 @@ impl MetricsTransition {
 }
 
 pub fn run() -> iced::Result {
+    use components::ui;
+
     iced::daemon(
         move || App::new(crate::new_app_state()),
         App::update,
@@ -123,6 +128,16 @@ pub fn run() -> iced::Result {
     .title(App::title)
     .subscription(App::subscription)
     .theme(App::theme)
+    // Bundle every face we render with so glyphs resolve identically on all
+    // platforms instead of via per-OS system-font fallback. Inter is the
+    // default text font; numbers use JetBrains Mono and icons the subset
+    // icon font (see `components::ui`).
+    .default_font(ui::INTER)
+    .font(ui::INTER_REGULAR)
+    .font(ui::INTER_SEMIBOLD)
+    .font(ui::INTER_BOLD)
+    .font(ui::JETBRAINS_MONO)
+    .font(ui::ICON_FONT)
     .run()
 }
 
@@ -794,7 +809,10 @@ impl App {
                                 components::metrics_panel::view(self),
                             ]
                             .spacing(14)
-                            .width(Length::Fixed(462.0)),
+                            // Proportional against the camera panel's
+                            // FillPortion(3) so the columns reflow with the
+                            // window instead of pinning a 462 px width.
+                            .width(Length::FillPortion(2)),
                         ]
                         .spacing(14)
                         .height(Length::FillPortion(7)),
@@ -881,9 +899,13 @@ impl App {
     fn main_window_settings() -> window::Settings {
         window::Settings {
             size: MAIN_WINDOW_SIZE,
-            resizable: false,
+            // Resizable + a guaranteed floor so the dashboard fits—and stays
+            // usable—on small or scaled screens. The main window is the
+            // dashboard, not an alert, so it stays at the normal stacking
+            // level instead of AlwaysOnTop (that's reserved for the alert).
+            min_size: Some(MAIN_WINDOW_MIN_SIZE),
+            resizable: true,
             minimizable: true,
-            level: window::Level::AlwaysOnTop,
             position: window::Position::Centered,
             exit_on_close_request: false,
             ..Default::default()
