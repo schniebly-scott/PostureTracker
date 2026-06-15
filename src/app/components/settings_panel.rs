@@ -1,15 +1,8 @@
 use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 
-use crate::app::theme::{AMBER, DARK_BLUE, LIGHT_BLUE, MID_BLUE, OWHITE};
+use crate::app::theme::{AMBER, ELEV, GREEN, PANEL, T1};
 use crate::app::{App, Message, MIN_ALERT_COOLDOWN_SECS};
-
-const POPUP_BG: Color = Color {
-    r: 0x25 as f32 / 255.0,
-    g: 0x29 as f32 / 255.0,
-    b: 0x32 as f32 / 255.0,
-    a: 1.0,
-};
 
 const FIELD_WIDTH: f32 = 300.0;
 
@@ -18,12 +11,12 @@ fn flat_button(label: &str) -> button::Button<'_, Message> {
         .padding([6, 14])
         .style(|_theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => MID_BLUE,
-                _ => DARK_BLUE,
+                button::Status::Hovered | button::Status::Pressed => ELEV,
+                _ => PANEL,
             };
             button::Style {
                 background: Some(Background::Color(bg)),
-                text_color: OWHITE,
+                text_color: T1,
                 border: Border::default().rounded(6),
                 ..button::Style::default()
             }
@@ -58,7 +51,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     container(content)
         .style(|_| container::Style {
-            background: Some(Background::Color(DARK_BLUE)),
+            background: Some(Background::Color(PANEL)),
             ..Default::default()
         })
         .width(Length::Fill)
@@ -175,9 +168,9 @@ pub fn camera_prompt(app: &App) -> Element<'_, Message> {
     .width(Length::Fixed(280.0))
     .padding(20)
     .style(|_| container::Style {
-        background: Some(Background::Color(POPUP_BG)),
+        background: Some(Background::Color(PANEL)),
         border: Border {
-            color: Color { a: 0.5, ..LIGHT_BLUE },
+            color: Color { a: 0.5, ..GREEN },
             width: 1.0,
             radius: 10.0.into(),
         },
