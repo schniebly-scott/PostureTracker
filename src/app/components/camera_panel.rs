@@ -24,7 +24,7 @@ const CHIP_BG: Color = Color {
 
 /// Purposeful empty state: icon, copy, and a calibration tip — not a lone box.
 fn idle_card<'a>() -> Element<'a, Message> {
-    let icon = container(text("\u{25A3}").size(26).color(T3))
+    let icon = container(ui::icon(ui::glyph::CAMERA, 26).color(T3))
         .width(56)
         .height(56)
         .center_x(56)
@@ -41,7 +41,7 @@ fn idle_card<'a>() -> Element<'a, Message> {
 
     let tip = container(
         row![
-            text("\u{25CE}").size(16).color(T3),
+            ui::icon(ui::glyph::TARGET, 16).color(T3),
             text("Sit upright before calibrating").size(15).color(T3),
         ]
         .spacing(6)
