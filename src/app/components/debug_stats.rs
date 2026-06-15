@@ -5,7 +5,7 @@ use iced::widget::{column, container, row, text};
 use iced::{Background, Color, Element, Length, Point, Rectangle, Renderer, Theme};
 use iced::mouse;
 
-use crate::app::theme::{DARK_BLUE, LIGHT_BLUE, OWHITE, WARNING_RED};
+use crate::app::theme::{GREEN, PANEL, RED, T1};
 use crate::app::{App, Message};
 use crate::metrics::AngleSample;
 
@@ -64,9 +64,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     )
     .style(move |_| container::Style {
         background: Some(Background::Color(if app.bad_posture {
-            WARNING_RED
+            RED
         } else {
-            DARK_BLUE
+            PANEL
         })),
         ..Default::default()
     })
@@ -138,7 +138,7 @@ impl<Message> canvas::Program<Message> for AngleChart<'_> {
             });
             frame.stroke(
                 &baseline_path,
-                Stroke::default().with_color(OWHITE).with_width(1.0),
+                Stroke::default().with_color(T1).with_width(1.0),
             );
 
             for &offset in &[self.threshold, -self.threshold] {
@@ -150,7 +150,7 @@ impl<Message> canvas::Program<Message> for AngleChart<'_> {
                 frame.stroke(
                     &t_path,
                     Stroke::default()
-                        .with_color(Color { a: 0.6, ..WARNING_RED })
+                        .with_color(Color { a: 0.6, ..RED })
                         .with_width(1.0),
                 );
             }
@@ -174,7 +174,7 @@ impl<Message> canvas::Program<Message> for AngleChart<'_> {
         });
         frame.stroke(
             &line,
-            Stroke::default().with_color(LIGHT_BLUE).with_width(2.0),
+            Stroke::default().with_color(GREEN).with_width(2.0),
         );
 
         vec![frame.into_geometry()]

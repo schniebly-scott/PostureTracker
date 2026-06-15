@@ -3,24 +3,8 @@ use iced::widget::{column, container, image, row, stack, text, Space};
 use iced::{Alignment, Background, Color, ContentFit, Element, Length, Length::Fill};
 
 use crate::app::components::ui;
-use crate::app::theme::{ELEV, GREEN, LINE, RED, T2, T3};
+use crate::app::theme::{ELEV, GREEN, LINE, RED, SCRIM, T2, T3, VIDEO_BG};
 use crate::app::{App, Message};
-
-/// Near-black matte behind the video, like a video player.
-const FRAME_BG: Color = Color {
-    r: 0x0C as f32 / 255.0,
-    g: 0x0E as f32 / 255.0,
-    b: 0x11 as f32 / 255.0,
-    a: 1.0,
-};
-
-/// Translucent ink for the floating chips overlaid on the feed.
-const CHIP_BG: Color = Color {
-    r: 0x0A as f32 / 255.0,
-    g: 0x0C as f32 / 255.0,
-    b: 0x0F as f32 / 255.0,
-    a: 0.72,
-};
 
 /// Purposeful empty state: icon, copy, and a calibration tip — not a lone box.
 fn idle_card<'a>() -> Element<'a, Message> {
@@ -100,7 +84,7 @@ fn angle_chip<'a>(app: &App) -> Element<'a, Message> {
     )
     .padding([8, 12])
     .style(|_| container::Style {
-        background: Some(Background::Color(CHIP_BG)),
+        background: Some(Background::Color(SCRIM)),
         border: Border {
             color: ui::with_alpha(Color::WHITE, 0.10),
             width: 1.0,
@@ -133,7 +117,7 @@ fn rec_chip<'a>(app: &App) -> Element<'a, Message> {
     )
     .padding([7, 11])
     .style(|_| container::Style {
-        background: Some(Background::Color(CHIP_BG)),
+        background: Some(Background::Color(SCRIM)),
         border: Border {
             color: ui::with_alpha(Color::WHITE, 0.09),
             width: 1.0,
@@ -199,7 +183,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     container(inner)
         .style(move |_| container::Style {
-            background: Some(Background::Color(FRAME_BG)),
+            background: Some(Background::Color(VIDEO_BG)),
             border: Border {
                 color: border_color,
                 width: 1.0,

@@ -68,10 +68,12 @@ pub const RED: Color = rgb(0xF26D78);
 /// Amber warning.
 pub const AMBER: Color = rgb(0xE8B15A);
 
-// ---- Legacy aliases (kept for the settings / debug / alert screens
-// that are out of scope for this redesign pass) ----
-pub const OWHITE: Color = T1;
-pub const LIGHT_BLUE: Color = GREEN;
-pub const MID_BLUE: Color = ELEV;
-pub const DARK_BLUE: Color = PANEL;
-pub const WARNING_RED: Color = RED;
+/// Near-black matte behind the camera feed, like a video player.
+pub const VIDEO_BG: Color = rgb(0x0C0E11);
+/// Translucent ink for chips/scrims floating over the feed.
+pub const SCRIM: Color = Color {
+    r: 0x0A as f32 / 255.0,
+    g: 0x0C as f32 / 255.0,
+    b: 0x0F as f32 / 255.0,
+    a: 0.72,
+};
