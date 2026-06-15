@@ -224,7 +224,8 @@ fn graph_card(app: &App) -> Element<'_, Message> {
 
     container(column![head, chart].spacing(8).height(Fill))
         .padding([14, 16])
-        .width(Fill)
+        // Larger share than the controls column (FillPortion(2)) to its left.
+        .width(Length::FillPortion(3))
         .height(Fill)
         .style(ui::tile_style)
         .into()
@@ -242,7 +243,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
         dismiss_toggle(app),
     ]
     .spacing(16)
-    .width(Length::Fixed(366.0));
+    // Reflows with the window but stays narrow enough to keep the controls
+    // readable; the graph card to its right takes the remaining width.
+    .width(Length::FillPortion(2))
+    .max_width(366.0);
 
     let body = row![left, graph_card(app)]
         .spacing(22)

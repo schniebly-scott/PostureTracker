@@ -43,7 +43,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let panel = container(
         column![header, body, footer]
-            .spacing(10)
+            .spacing(PANEL_SPACING)
             .width(Length::Fill)
             .height(Length::Fill),
     )
@@ -54,15 +54,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .clip(true);
 
     if app.metrics_reset_open {
-        // Anchor the confirm popup over the full panel. The panel is the stack's
-        // first (sizing) layer, so the popup gets the whole panel area to lay out
-        // in rather than being clipped to the short footer row.
+        // Float the confirm popup over the full panel (the panel is the stack's
+        // first/sizing layer, so the popup gets the whole panel area to lay out
+        // in rather than being clipped to the short footer row). Anchor it to
+        // the bottom-right and lift it clear of the footer by the footer's own
+        // height plus the column spacing — no magic offset to keep in sync.
         let overlay = container(reset_popup(app.metrics_category))
             .align_x(Alignment::End)
             .align_y(Alignment::End)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding([56, 16]);
+            .padding(Padding::ZERO.right(16.0).bottom(FOOTER_HEIGHT + PANEL_SPACING));
         stack![panel, overlay].into()
     } else {
         panel.into()
@@ -535,8 +537,9 @@ fn view_footer() -> Element<'static, Message> {
             }
         });
 
-    row![Space::new().width(Length::Fill), reset_btn]
+    container(row![Space::new().width(Length::Fill), reset_btn].align_y(Alignment::Center))
         .width(Length::Fill)
+        .height(Length::Fixed(FOOTER_HEIGHT))
         .align_y(Alignment::Center)
         .into()
 }

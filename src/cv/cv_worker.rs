@@ -16,8 +16,6 @@ pub struct CVWorker {
 
 impl CVWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
-        let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
-
         thread::spawn(move || {
             // ---------- Get reference to Model inside thread ----------
             let mut model_lock = self.model.lock().unwrap();
@@ -51,10 +49,10 @@ impl CVWorker {
                     };
 
                     // ---------- Publish result ----------
-                    let buf = RgbaBuffer {
-                        data: output,
-                        pool: pool.clone(),
-                    };
+                    // Not pooled: the overlay is freshly rendered each frame and
+                    // never recycled, so returning it to a pool only grows that
+                    // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
+                    let buf = RgbaBuffer::unpooled(output);
 
                     let _ = self.core.tx.send(Inference {
                         frame: (width, height, Arc::new(buf)),

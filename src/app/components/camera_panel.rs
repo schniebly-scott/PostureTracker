@@ -1,6 +1,6 @@
 use iced::border::Border;
 use iced::widget::{column, container, image, row, stack, text, Space};
-use iced::{Alignment, Background, Color, ContentFit, Element, Length::Fill};
+use iced::{Alignment, Background, Color, ContentFit, Element, Length, Length::Fill};
 
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, LINE, RED, SCRIM, T2, T3, VIDEO_BG};
@@ -192,7 +192,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ..Default::default()
         })
         .clip(true)
-        .width(Fill)
+        // Takes the larger share of the dashboard row; the controls/metrics
+        // column to its right is FillPortion(2).
+        .width(Length::FillPortion(3))
         .height(Fill)
         .into()
 }
