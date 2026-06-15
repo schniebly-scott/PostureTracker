@@ -328,10 +328,10 @@ impl App {
         }
     }
 
-    /// Loads the model if needed, starts/stops the pipeline per the sample
-    /// interval, and switches into background tracking. Returns `false` if the
-    /// model failed to load (the caller should bail without changing windows).
-    fn begin_background_tracking(&mut self) -> bool {
+    /// Loads the inference model if it hasn't been loaded yet, recording the
+    /// load time. Returns `false` if the model failed to load (the caller
+    /// should bail out without starting the pipeline).
+    fn ensure_model_loaded(&mut self) -> bool {
         if matches!(self.inference_state, InferenceState::Unloaded) {
             match self.pipelines.cv_manager.load_model() {
                 Ok(elapsed) => {
@@ -342,6 +342,16 @@ impl App {
                     return false;
                 }
             }
+        }
+        true
+    }
+
+    /// Loads the model if needed, starts/stops the pipeline per the sample
+    /// interval, and switches into background tracking. Returns `false` if the
+    /// model failed to load (the caller should bail without changing windows).
+    fn begin_background_tracking(&mut self) -> bool {
+        if !self.ensure_model_loaded() {
+            return false;
         }
 
         if self.sample_interval_secs().is_some() {
@@ -360,6 +370,136 @@ impl App {
         true
     }
 
+    /// Ingests a fresh inference result: updates the displayed frame, time
+    /// metrics, and current angle, recomputes `bad_posture`, and feeds the
+    /// metrics store.
+    fn apply_inference(
+        &mut self,
+        frame: image::Handle,
+        time_metrics: TimeMetrics,
+        angle: Option<f32>,
+    ) {
+        self.cv_frame = Some(frame);
+        self.time_metrics = Some(time_metrics);
+        self.posture_angle_deg = angle;
+        self.bad_posture =
+            is_bad_posture(self.posture_baseline_deg, angle, self.posture_threshold_deg);
+        self.metrics.ingest(angle, self.bad_posture);
+    }
+
+    /// Advances an in-progress calibration by one sample. Pushes the angle (if
+    /// present) and, once the sampling window has elapsed, resolves to a
+    /// baseline (saving config) or a failure message. A no-op when not
+    /// currently sampling.
+    fn ingest_calibration_sample(&mut self, angle: Option<f32>) {
+        if let CalibrationState::Sampling {
+            ref mut samples,
+            started_at,
+        } = self.calibration_state
+        {
+            if let Some(angle) = angle {
+                samples.push(angle);
+            }
+
+            if started_at.elapsed() >= Duration::from_secs(CALIBRATION_SAMPLE_SECS) {
+                let collected = std::mem::take(samples);
+                self.calibration_state = match calibration_baseline(collected) {
+                    Ok(median) => {
+                        self.posture_baseline_deg = Some(median);
+                        self.save_config();
+                        CalibrationState::Idle
+                    }
+                    Err(message) => CalibrationState::Failed(message),
+                };
+            }
+        }
+    }
+
+    /// Background-mode posture policy. In continuous mode every frame is judged
+    /// directly; in interval mode frames are buffered and a majority vote
+    /// decides. Returns the Task to run (possibly opening or dismissing the
+    /// alert window).
+    fn evaluate_background(&mut self, angle: Option<f32>) -> Task<Message> {
+        if !matches!(self.run_mode, RunMode::Background) {
+            return Task::none();
+        }
+
+        if self.sample_interval_secs().is_none() {
+            // Continuous mode: judge each frame as it arrives. The pipeline is
+            // intentionally left running while an alert is shown (see
+            // `evaluate_alert`) so corrected posture can auto-dismiss it.
+            return self.evaluate_alert(self.bad_posture);
+        }
+
+        // Interval mode: buffer frames until we have a full sample window.
+        if let Some(ref mut samples) = self.background_samples {
+            samples.push(angle);
+        }
+
+        let has_enough = self
+            .background_samples
+            .as_ref()
+            .map(|s| s.len() >= self.background_sample_count)
+            .unwrap_or(false);
+
+        if !has_enough {
+            return Task::none();
+        }
+
+        let majority_bad = majority_bad_posture(
+            self.background_samples.as_deref().unwrap_or(&[]),
+            self.posture_baseline_deg,
+            self.posture_threshold_deg,
+            self.background_sample_count,
+        );
+
+        // Unlike continuous mode, interval mode stops the pipeline before
+        // deciding to alert — the camera idles between samples and is
+        // restarted by the next `BackgroundSampleTick`.
+        self.background_samples = None;
+        self.pipelines.camera_manager.stop();
+        self.pipelines.cv_manager.stop();
+
+        self.evaluate_alert(majority_bad)
+    }
+
+    /// Single policy point for the alert window. Opens (and maximizes) the
+    /// alert if posture is bad and the cooldown allows; auto-dismisses an open
+    /// alert when posture is good unless `force_dismiss` requires a manual
+    /// close. Returns the Task to run.
+    fn evaluate_alert(&mut self, bad: bool) -> Task<Message> {
+        if bad {
+            let can_alert = self.alert_window_id.is_none()
+                && self
+                    .last_alert_time
+                    .map(|t| t.elapsed() >= self.alert_cooldown)
+                    .unwrap_or(true);
+
+            if can_alert {
+                // The cooldown is started on dismiss, not here.
+                let (id, open) = window::open(Self::alert_window_settings());
+                self.alert_window_id = Some(id);
+                return Task::batch([open.discard(), window::maximize(id, true)]);
+            }
+        } else if self.alert_window_id.is_some() && !self.force_dismiss {
+            return self.dismiss_alert();
+        }
+
+        Task::none()
+    }
+
+    /// Closes the alert window if one is open and starts the re-alert cooldown
+    /// from now. The pipeline is never stopped on open, so there's nothing to
+    /// restart here.
+    fn dismiss_alert(&mut self) -> Task<Message> {
+        if let Some(id) = self.alert_window_id.take() {
+            self.last_alert_time = Some(Instant::now());
+            window::close(id)
+        } else {
+            Task::none()
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CamFrame(frame) => {
@@ -375,118 +515,9 @@ impl App {
                 if !self.pipelines.cv_manager.is_running() {
                     return Task::none();
                 }
-                self.cv_frame = Some(frame);
-                self.time_metrics = Some(time_metrics);
-                self.posture_angle_deg = posture_angle_deg;
-
-                self.bad_posture = match (self.posture_baseline_deg, posture_angle_deg) {
-                    (Some(baseline), Some(current)) => {
-                        (current - baseline).abs() >= self.posture_threshold_deg
-                    }
-                    _ => false,
-                };
-
-                self.metrics.ingest(posture_angle_deg, self.bad_posture);
-
-                // Calibration sample collection
-                if let CalibrationState::Sampling { ref mut samples, started_at } =
-                    self.calibration_state
-                {
-                    if let Some(angle) = posture_angle_deg {
-                        samples.push(angle);
-                    }
-
-                    if started_at.elapsed() >= Duration::from_secs(CALIBRATION_SAMPLE_SECS) {
-                        let collected = std::mem::take(samples);
-                        if collected.len() < MIN_CALIBRATION_SAMPLES {
-                            self.calibration_state = CalibrationState::Failed(format!(
-                                "Only {}/{} valid samples — ensure your face and shoulders are visible.",
-                                collected.len(),
-                                MIN_CALIBRATION_SAMPLES
-                            ));
-                        } else {
-                            let mut sorted = collected;
-                            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                            let median = sorted[sorted.len() / 2];
-                            self.posture_baseline_deg = Some(median);
-                            self.calibration_state = CalibrationState::Idle;
-                            self.save_config();
-                        }
-                    }
-                }
-
-                // Background mode posture checking
-                if matches!(self.run_mode, RunMode::Background) {
-                    if self.sample_interval_secs().is_none() {
-                        if self.bad_posture {
-                            let can_alert = self.alert_window_id.is_none()
-                                && self
-                                    .last_alert_time
-                                    .map(|t| t.elapsed() >= self.alert_cooldown)
-                                    .unwrap_or(true);
-
-                            if can_alert {
-                                // Leave the camera/CV pipeline running while the
-                                // alert is shown so we keep evaluating posture and
-                                // can auto-dismiss once it's corrected. The cooldown
-                                // is started on dismiss, not here.
-                                let (id, open) = window::open(Self::alert_window_settings());
-                                self.alert_window_id = Some(id);
-                                return Task::batch([open.discard(), window::maximize(id, true)]);
-                            }
-                        } else if self.alert_window_id.is_some() && !self.force_dismiss {
-                            return self.update(Message::DismissAlert);
-                        }
-                    } else {
-                        if let Some(ref mut samples) = self.background_samples {
-                            samples.push(posture_angle_deg);
-                        }
-
-                        let has_enough = self
-                            .background_samples
-                            .as_ref()
-                            .map(|s| s.len() >= self.background_sample_count)
-                            .unwrap_or(false);
-
-                        if has_enough {
-                            let baseline = self.posture_baseline_deg;
-                            let threshold = self.posture_threshold_deg;
-
-                            let bad_count = self
-                                .background_samples
-                                .as_ref()
-                                .unwrap()
-                                .iter()
-                                .filter(|angle_opt| match (baseline, **angle_opt) {
-                                    (Some(b), Some(a)) => (a - b).abs() >= threshold,
-                                    _ => false,
-                                })
-                                .count();
-
-                            self.background_samples = None;
-                            self.pipelines.camera_manager.stop();
-                            self.pipelines.cv_manager.stop();
-
-                            if bad_count > self.background_sample_count / 2 {
-                                let can_alert = self.alert_window_id.is_none()
-                                    && self
-                                        .last_alert_time
-                                        .map(|t| t.elapsed() >= self.alert_cooldown)
-                                        .unwrap_or(true);
-
-                                if can_alert {
-                                    let (id, open) = window::open(Self::alert_window_settings());
-                                    self.alert_window_id = Some(id);
-                                    return Task::batch([open.discard(), window::maximize(id, true)]);
-                                }
-                            } else if self.alert_window_id.is_some() && !self.force_dismiss {
-                                return self.update(Message::DismissAlert);
-                            }
-                        }
-                    }
-                }
-
-                Task::none()
+                self.apply_inference(frame, time_metrics, posture_angle_deg);
+                self.ingest_calibration_sample(posture_angle_deg);
+                self.evaluate_background(posture_angle_deg)
             }
             Message::WindowCloseRequested(window_id) => {
                 if window_id == self.main_window_id {
@@ -523,16 +554,8 @@ impl App {
                 }
             }
             Message::TestPosturePressed => {
-                if matches!(self.inference_state, InferenceState::Unloaded) {
-                    match self.pipelines.cv_manager.load_model() {
-                        Ok(elapsed) => {
-                            self.model_load_time = Some(elapsed);
-                        }
-                        Err(e) => {
-                            eprintln!("Unable to load model: {}", e);
-                            return Task::none();
-                        }
-                    };
+                if !self.ensure_model_loaded() {
+                    return Task::none();
                 }
 
                 self.pipelines
@@ -563,12 +586,11 @@ impl App {
             }
             Message::PostureThresholdChanged(threshold_deg) => {
                 self.posture_threshold_deg = threshold_deg;
-                self.bad_posture = match (self.posture_baseline_deg, self.posture_angle_deg) {
-                    (Some(baseline), Some(current)) => {
-                        (current - baseline).abs() >= self.posture_threshold_deg
-                    }
-                    _ => false,
-                };
+                self.bad_posture = is_bad_posture(
+                    self.posture_baseline_deg,
+                    self.posture_angle_deg,
+                    self.posture_threshold_deg,
+                );
                 Task::none()
             }
             Message::PostureThresholdReleased => {
@@ -640,17 +662,7 @@ impl App {
                 }
                 Task::none()
             }
-            Message::DismissAlert => {
-                if let Some(id) = self.alert_window_id.take() {
-                    // Start the re-alert cooldown from when the alert is
-                    // dismissed, not when it opened. The pipeline was never
-                    // stopped on open, so there's nothing to restart here.
-                    self.last_alert_time = Some(Instant::now());
-                    window::close(id)
-                } else {
-                    Task::none()
-                }
-            }
+            Message::DismissAlert => self.dismiss_alert(),
             Message::SessionModeSelected(mode) => {
                 self.session_start_mode = mode;
                 self.config.session.start_in_background = matches!(mode, RunMode::Background);
@@ -913,6 +925,49 @@ impl App {
     }
 }
 
+/// Posture is "bad" when the current angle deviates from the calibrated
+/// baseline by at least the threshold. Missing baseline or angle reads as good
+/// posture (nothing to compare against).
+fn is_bad_posture(baseline: Option<f32>, angle: Option<f32>, threshold: f32) -> bool {
+    match (baseline, angle) {
+        (Some(baseline), Some(angle)) => (angle - baseline).abs() >= threshold,
+        _ => false,
+    }
+}
+
+/// Interval-mode decision: do a majority of the buffered samples read as bad
+/// posture? The vote is taken against the expected `sample_count` (the window
+/// size), so a window padded with extra frames still needs a true majority.
+fn majority_bad_posture(
+    samples: &[Option<f32>],
+    baseline: Option<f32>,
+    threshold: f32,
+    sample_count: usize,
+) -> bool {
+    let bad_count = samples
+        .iter()
+        .filter(|angle| is_bad_posture(baseline, **angle, threshold))
+        .count();
+    bad_count > sample_count / 2
+}
+
+/// Resolves a completed calibration window to a baseline angle. Requires at
+/// least `MIN_CALIBRATION_SAMPLES` valid samples; on success returns their
+/// median, otherwise an error message suitable for display.
+fn calibration_baseline(samples: Vec<f32>) -> Result<f32, String> {
+    if samples.len() < MIN_CALIBRATION_SAMPLES {
+        return Err(format!(
+            "Only {}/{} valid samples — ensure your face and shoulders are visible.",
+            samples.len(),
+            MIN_CALIBRATION_SAMPLES
+        ));
+    }
+
+    let mut sorted = samples;
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(sorted[sorted.len() / 2])
+}
+
 fn interval_choice_from_secs(secs: u64) -> (SampleIntervalChoice, String) {
     match secs {
         0 => (SampleIntervalChoice::Constant, String::new()),
@@ -980,5 +1035,67 @@ mod tests {
         let (choice, text) = interval_choice_from_secs(120);
         assert_eq!(choice, SampleIntervalChoice::Custom);
         assert_eq!(text, "2");
+    }
+
+    #[test]
+    fn is_bad_posture_needs_baseline_and_angle() {
+        // No baseline or no current angle => can't judge => not bad.
+        assert!(!is_bad_posture(None, Some(20.0), 5.0));
+        assert!(!is_bad_posture(Some(10.0), None, 5.0));
+        assert!(!is_bad_posture(None, None, 5.0));
+    }
+
+    #[test]
+    fn is_bad_posture_compares_deviation_to_threshold() {
+        let baseline = Some(10.0);
+        // Deviation below threshold is fine.
+        assert!(!is_bad_posture(baseline, Some(14.0), 5.0));
+        // At-threshold is bad (>=), in either direction.
+        assert!(is_bad_posture(baseline, Some(15.0), 5.0));
+        assert!(is_bad_posture(baseline, Some(5.0), 5.0));
+        // Well past the threshold.
+        assert!(is_bad_posture(baseline, Some(30.0), 5.0));
+    }
+
+    #[test]
+    fn majority_bad_posture_needs_strict_majority() {
+        let baseline = Some(0.0);
+        let threshold = 5.0;
+        // good, good, bad, bad => 2 of 4, not a strict majority of 4.
+        let samples = [Some(0.0), Some(1.0), Some(10.0), Some(20.0)];
+        assert!(!majority_bad_posture(&samples, baseline, threshold, 4));
+        // good, bad, bad, bad => 3 of 4 is a majority.
+        let samples = [Some(0.0), Some(10.0), Some(20.0), Some(30.0)];
+        assert!(majority_bad_posture(&samples, baseline, threshold, 4));
+    }
+
+    #[test]
+    fn majority_bad_posture_counts_missing_angles_as_good() {
+        let baseline = Some(0.0);
+        // Two bad reads but two missing => not a majority of 4.
+        let samples = [None, None, Some(10.0), Some(20.0)];
+        assert!(!majority_bad_posture(&samples, baseline, 5.0, 4));
+    }
+
+    #[test]
+    fn majority_bad_posture_votes_against_expected_window() {
+        // An overfilled window (5 samples) still needs a majority of the
+        // expected count (4), i.e. > 2.
+        let baseline = Some(0.0);
+        let samples = [Some(0.0), Some(0.0), Some(10.0), Some(10.0), Some(10.0)];
+        assert!(majority_bad_posture(&samples, baseline, 5.0, 4));
+    }
+
+    #[test]
+    fn calibration_baseline_rejects_too_few_samples() {
+        let samples = vec![1.0; MIN_CALIBRATION_SAMPLES - 1];
+        assert!(calibration_baseline(samples).is_err());
+    }
+
+    #[test]
+    fn calibration_baseline_returns_median() {
+        // Unsorted input; median of 7 sorted values is the 4th (index 3).
+        let samples = vec![30.0, 10.0, 20.0, 50.0, 40.0, 70.0, 60.0];
+        assert_eq!(calibration_baseline(samples), Ok(40.0));
     }
 }
