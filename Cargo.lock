@@ -3656,6 +3656,7 @@ name = "posturetracker"
 version = "0.2.0"
 dependencies = [
  "async-stream",
+ "bytes",
  "ccap-rs",
  "chrono",
  "dirs 5.0.1",
