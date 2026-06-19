@@ -194,6 +194,12 @@ impl MetricsStore {
         self.breaks_today
     }
 
+    /// Whether a tracking session is currently open (a `Start` was logged
+    /// without a matching `Stop`).
+    pub fn is_tracking(&self) -> bool {
+        self.tracking_since.is_some()
+    }
+
     pub fn bad_posture_duration_today(&self) -> Duration {
         let extra = self
             .bad_posture_since

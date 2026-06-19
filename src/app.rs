@@ -558,6 +558,16 @@ impl App {
             }
             Message::WindowCloseRequested(window_id) => {
                 if window_id == self.main_window_id {
+                    // When a tray icon is available and a session is active,
+                    // treat ✕ as hide-to-tray rather than quitting outright so
+                    // background tracking keeps running (the tray can restore
+                    // the window). Without a tray, hiding would strand the app
+                    // with no way back, so fall through to a clean quit.
+                    let session_active =
+                        matches!(self.run_mode, RunMode::Background) || self.metrics.is_tracking();
+                    if self.has_system_tray() && session_active {
+                        return self.update(Message::HideMainWindowPressed);
+                    }
                     return self.update(Message::QuitRequested);
                 } else if self.debug_window_id == Some(window_id) {
                     self.debug_window_id = None;
@@ -580,6 +590,10 @@ impl App {
                 ])
             }
             Message::QuitRequested => {
+                // Flush the open tracking interval so the append-only log gets a
+                // matching `Stop` event; otherwise the session's tracked time is
+                // dropped on next launch (unmatched `Start`s are ignored).
+                self.metrics.stop_tracking();
                 // Final flush for any text-field edit not yet committed.
                 self.flush_config();
                 iced::exit()

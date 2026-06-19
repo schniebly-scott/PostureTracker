@@ -7,14 +7,14 @@ use iced::{Alignment, Background, Color, Element, Length, Padding};
 use crate::app::components::slide::slide;
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, HOVER, LINE, PANEL, RED, T1};
+use crate::app::components::ui::bold;
 use crate::app::{App, MetricsCategory, Message, SlideDirection};
 
-/// Height the footer row reserves. The reset popup floats just above it, so
-/// the popup's bottom offset is derived from this rather than a magic number.
 const FOOTER_HEIGHT: f32 = 30.0;
-
-/// Vertical gap between body, footer, and the floating popup.
 const PANEL_SPACING: f32 = 10.0;
+
+/// Off-white, aliased to the primary text token.
+const OWHITE: Color = T1;
 
 fn fmt_duration(d: Option<Duration>) -> String {
     let Some(d) = d else {
