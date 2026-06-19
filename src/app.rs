@@ -599,14 +599,12 @@ impl App {
                     return Task::none();
                 }
 
-                self.pipelines
-                    .camera_manager
-                    .start()
-                    .expect("Unable to start camera");
-                self.pipelines
-                    .cv_manager
-                    .start()
-                    .expect("Unable to start model");
+                if let Err(e) = self.pipelines.camera_manager.start() {
+                    eprintln!("Unable to start camera: {e}");
+                }
+                if let Err(e) = self.pipelines.cv_manager.start() {
+                    eprintln!("Unable to start model: {e}");
+                }
                 self.posture_angle_deg = None;
                 self.bad_posture = false;
                 self.run_mode = RunMode::Foreground;
