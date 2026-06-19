@@ -12,7 +12,7 @@ use crate::app::{App, CalibrationState, InferenceState, Message, RunMode};
 const PANEL_HEIGHT: f32 = 210.0;
 
 /// A button label: a leading glyph plus text, sized for the button system.
-fn btn_label(glyph: &str, label: &str) -> Element<'static, Message> {
+fn btn_label<'a>(glyph: &'a str, label: &'a str) -> Element<'a, Message> {
     glyph_label(glyph, 14, label)
 }
 
@@ -24,12 +24,12 @@ fn btn_label(glyph: &str, label: &str) -> Element<'static, Message> {
 /// fixed line height so the label's vertical extent doesn't shift between the
 /// icon and the Inter label, keeping every button the same height. The whole
 /// label is centered horizontally for a balanced full-width button.
-fn glyph_label(glyph: &str, glyph_size: u16, label: &str) -> Element<'static, Message> {
+fn glyph_label<'a>(glyph: &'a str, glyph_size: u16, label: &'a str) -> Element<'a, Message> {
     let line = text::LineHeight::Absolute(20.0.into());
     container(
         row![
             ui::icon(glyph, glyph_size).line_height(line),
-            text(label.to_string())
+            text(label)
                 .size(14)
                 .font(ui::semibold())
                 .line_height(line),
