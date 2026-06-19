@@ -13,11 +13,12 @@ UI: cross-platform layout & consistency). Each file is self-contained for handof
 | ~~[config_save_per_keystroke.md](config_save_per_keystroke.md)~~ | ~~TOML rewrite on every keystroke; transient values can persist~~                                     | ~~Low~~      |
 
 ## Correctness & robustness
-| File                                                     | Summary                                                                                 | Severity     |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------ |
-| ~~[camera_failure_panics.md](camera_failure_panics.md)~~ | ~~`.expect`/`.unwrap` on camera paths panic app/thread; errors never reach the UI~~     | ~~Med-high~~ |
-| ~~[cv_worker_model_mutex.md](cv_worker_model_mutex.md)~~ | ~~Model mutex held for worker thread lifetime; latent deadlock on reload/double-start~~ | ~~Medium~~   |
-| ~~[close_to_tray_behavior.md](close_to_tray_behavior.md)~~   | ~~✕ quits mid-tracking (loses unflushed session log); should hide to tray~~                 | ~~Medium~~       |
+| File                                                       | Summary                                                                                 | Severity   |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------- |
+| [camera_failure_panics.md](camera_failure_panics.md)       | `.expect`/`.unwrap` on camera paths panic app/thread; errors never reach the UI         | Med-high   |
+| ~~[cv_worker_model_mutex.md](cv_worker_model_mutex.md)~~   | ~~Model mutex held for worker thread lifetime; latent deadlock on reload/double-start~~ | ~~Medium~~ |
+| ~~[close_to_tray_behavior.md](close_to_tray_behavior.md)~~ | ~~✕ quits mid-tracking (loses unflushed session log); should hide to tray~~             | ~~Medium~~ |
+|                                                            |                                                                                         |            |
 
 ## Structure & idiomatic Rust
 | File                                                                         | Summary                                                                               | Severity    |
