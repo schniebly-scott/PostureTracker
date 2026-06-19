@@ -1,20 +1,67 @@
-name: Build & Package
+name: Release & Build
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  # Change this to your binary name (the [[bin]] name in Cargo.toml)
   BIN_NAME: posturetracker
-  # Change this to your app's display name / package name
   APP_NAME: Posture Tracker
 
 jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version_check.outputs.changed }}
+      version: ${{ steps.version_check.outputs.version }}
+      tag: ${{ steps.version_check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if Cargo.toml version changed
+        id: version_check
+        run: |
+          CURRENT_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version\s*=\s*"(.*)"/\1/')
+          git show HEAD~1:Cargo.toml > /tmp/prev_cargo.toml 2>/dev/null || echo "" > /tmp/prev_cargo.toml
+          PREV_VERSION=$(grep -m1 '^version' /tmp/prev_cargo.toml | sed -E 's/version\s*=\s*"(.*)"/\1/' || echo "")
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Previous version: $PREV_VERSION"
+
+          if [ "$CURRENT_VERSION" != "$PREV_VERSION" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=v$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  tag:
+    needs: version-check
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create and push tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "${{ needs.version-check.outputs.tag }}"
+          git push origin "${{ needs.version-check.outputs.tag }}"
+
   build:
+    needs: [version-check, tag]
+    if: needs.version-check.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +125,7 @@ jobs:
           name: ${{ env.BIN_NAME }}-${{ matrix.artifact }}-deb
           path: target/${{ matrix.target }}/debian/*.deb
 
-      # ---------- Linux: raw binary (in addition to .deb) ----------
+      # ---------- Linux: raw binary ----------
       - name: Package Linux binary
         if: matrix.os == 'ubuntu-24.04'
         run: |
@@ -129,11 +176,11 @@ jobs:
               <key>CFBundleName</key>
               <string>${{ env.APP_NAME }}</string>
               <key>CFBundleVersion</key>
-              <string>1.0</string>
+              <string>${{ needs.version-check.outputs.version }}</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
+              <string>${{ needs.version-check.outputs.version }}</string>
               <key>NSHighResolutionCapable</key>
               <true/>
           </dict>
@@ -150,8 +197,8 @@ jobs:
           path: dist/${{ env.BIN_NAME }}-${{ matrix.artifact }}.zip
 
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version-check, build]
+    if: needs.version-check.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -161,8 +208,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version-check.outputs.tag }}
+          name: ${{ needs.version-check.outputs.tag }}
           files: artifacts/**/*
+          generate_release_notes: true
           draft: true

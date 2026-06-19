@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::SharedFrame;
@@ -68,9 +67,7 @@ impl ManagedService for CameraManager {
         &self.core
     }
 
-    fn start(&self) -> Result<(), Box<dyn Error>> {
-        self.core.running.store(true, Ordering::SeqCst);
-
+    fn spawn_worker(&self) -> Result<(), Box<dyn Error>> {
         CameraWorker {
             config: self.config.lock().unwrap().clone(),
             core: self.core.clone(),

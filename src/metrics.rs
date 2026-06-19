@@ -424,50 +424,15 @@ impl MetricsStore {
     }
 
     fn load_today(&mut self) {
-        let path = self.log_path();
-        let Ok(file) = File::open(&path) else {
-            return;
-        };
-
-        let mut last_start_ms: Option<i64> = None;
-        let mut last_bad_ms: Option<i64> = None;
-
-        for line in BufReader::new(file).lines().flatten() {
-            let mut parts = line.splitn(2, ',');
-            let Some(ts_str) = parts.next() else {
-                continue;
-            };
-            let Some(event) = parts.next() else {
-                continue;
-            };
-            let Ok(ts) = ts_str.parse::<i64>() else {
-                continue;
-            };
-
-            match event {
-                "Start" => {
-                    last_start_ms = Some(ts);
-                }
-                "Stop" => {
-                    if let Some(start) = last_start_ms.take() {
-                        self.tracked_secs_today += (ts - start).max(0) as f64 / 1000.0;
-                    }
-                    if let Some(bad) = last_bad_ms.take() {
-                        self.bad_posture_secs_today += (ts - bad).max(0) as f64 / 1000.0;
-                    }
-                }
-                "GoodToBad" => {
-                    self.breaks_today += 1;
-                    last_bad_ms = Some(ts);
-                }
-                "BadToGood" => {
-                    if let Some(bad) = last_bad_ms.take() {
-                        self.bad_posture_secs_today += (ts - bad).max(0) as f64 / 1000.0;
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Restores today's totals from the log via the same parser used for past-day
+        // aggregation, so the startup-restore and all-time paths can't diverge.
+        // `+=` is equivalent to `=` here: this runs once from `new()` on zeroed fields.
+        // Note: an unmatched trailing `Start` (e.g. a crash mid-session leaving no
+        // `Stop`) silently drops that open interval — `parse_log_totals` does the same.
+        let (breaks, bad_secs, tracked_secs) = parse_log_totals(&self.log_path());
+        self.breaks_today += breaks;
+        self.bad_posture_secs_today += bad_secs;
+        self.tracked_secs_today += tracked_secs;
     }
 
     fn load_all_time(&mut self) {
