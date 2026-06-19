@@ -7,8 +7,8 @@ use crate::app::theme::{AMBER, T2};
 use crate::app::{App, Message, MIN_ALERT_COOLDOWN_SECS};
 
 /// A semibold text label sized for the kit button system.
-fn btn_label(label: &str) -> Element<'static, Message> {
-    text(label.to_string()).size(14).font(ui::semibold()).into()
+fn btn_label(label: &str) -> Element<'_, Message> {
+    text(label).size(14).font(ui::semibold()).into()
 }
 
 /// Wrap a section's body in a `panel_style` card led by a `micro_label`
@@ -60,7 +60,7 @@ fn camera_pick_list(app: &App, width: Length) -> Element<'_, Message> {
         .cloned();
 
     pick_list(
-        app.available_cameras.clone(),
+        app.available_cameras.as_slice(),
         selected,
         Message::CameraSelected,
     )
@@ -113,6 +113,7 @@ fn cooldown_field(app: &App) -> Element<'_, Message> {
     let input = row![
         text_input("60", &app.cooldown_input)
             .on_input(Message::CooldownInputChanged)
+            .on_submit(Message::CommitConfig)
             .size(14)
             .width(Length::Fixed(80.0))
             .padding([8, 12]),

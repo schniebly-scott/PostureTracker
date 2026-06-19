@@ -2,12 +2,19 @@ use std::time::Duration;
 
 use iced::border::Border;
 use iced::widget::{button, column, container, progress_bar, row, stack, text, Space};
-use iced::{Alignment, Background, Color, Element, Length};
+use iced::{Alignment, Background, Color, Element, Length, Padding};
 
 use crate::app::components::slide::slide;
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, HOVER, LINE, PANEL, RED, T1};
+use crate::app::components::ui::bold;
 use crate::app::{App, MetricsCategory, Message, SlideDirection};
+
+const FOOTER_HEIGHT: f32 = 30.0;
+const PANEL_SPACING: f32 = 10.0;
+
+/// Off-white, aliased to the primary text token.
+const OWHITE: Color = T1;
 
 fn fmt_duration(d: Option<Duration>) -> String {
     let Some(d) = d else {
@@ -212,7 +219,7 @@ fn view_session(app: &App) -> Element<'_, Message> {
         row![
             row![
                 ui::icon(ui::glyph::BARS, 13),
-                text("Posture Quality").size(12).color(Color { a: 0.75, ..OWHITE }),
+                text("Posture Quality").size(12).color(Color { a: 0.75, ..T1 }),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -343,7 +350,7 @@ fn primary_card<'a>(
 ) -> Element<'a, Message> {
     let label_block = row![
         ui::icon(glyph, 18),
-        text(label).size(12).font(bold()).color(Color {
+        text(label).size(12).font(ui::bold()).color(Color {
             a: 0.75,
             ..T1
         }),
@@ -407,8 +414,8 @@ fn secondary_card<'a>(
     container(
         row![
             row![
-                ui::icon(glyph, 13).color(OWHITE),
-                text(label).size(12).color(OWHITE),
+                ui::icon(glyph, 13).color(T1),
+                text(label).size(12).color(T1),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -447,7 +454,7 @@ fn quick_card<'a>(
 ) -> Element<'a, Message> {
     let label_block = row![
         ui::icon(glyph, 18).color(accent),
-        text(label).size(12).font(bold()).color(Color {
+        text(label).size(12).font(ui::bold()).color(Color {
             a: 0.75,
             ..T1
         }),
@@ -515,7 +522,7 @@ fn view_footer() -> Element<'static, Message> {
     let reset_btn = button(
         row![
             ui::icon(ui::glyph::REFRESH, 18),
-            text("Reset").size(13).font(bold()),
+            text("Reset").size(13).font(ui::bold()),
         ]
         .spacing(6)
         .align_y(Alignment::Center),

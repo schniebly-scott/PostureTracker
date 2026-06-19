@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{error::Error, time::Instant};
@@ -25,6 +24,13 @@ impl CVManager {
     }
 
     pub fn load_model(&self) -> Result<Duration, Box<dyn Error>> {
+        // A live worker owns the model by value (see `spawn_worker`), so the
+        // shared slot is empty while it runs. Reloading now would be clobbered
+        // when the worker returns its model on exit — reject instead.
+        if self.is_running() {
+            return Err("cannot load model while the CV worker is running".into());
+        }
+
         let now = Instant::now();
         let estimator = Model::new()?;
         let elapsed = now.elapsed();
@@ -44,11 +50,21 @@ impl ManagedService for CVManager {
         &self.core
     }
 
-    fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.core.running.store(true, Ordering::SeqCst);
+    fn spawn_worker(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Take the model *out* of the shared slot for the run and hand it to the
+        // worker by value. This keeps `load_model` from contending with a live
+        // worker for the mutex and makes "model in use" explicit: the slot is
+        // None while a session runs, and the worker puts the model back on exit.
+        let model = self
+            .model
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("model is not loaded")?;
 
         CVWorker {
-            model: self.model.clone(),
+            model,
+            slot: self.model.clone(),
             shared: self.shared.clone(),
             core: self.core.clone(),
         }

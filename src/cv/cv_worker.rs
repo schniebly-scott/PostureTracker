@@ -8,7 +8,11 @@ use crate::camera::RgbaBuffer;
 use crate::utils::ServiceCore;
 
 pub struct CVWorker {
-    pub model: Arc<Mutex<Option<Model>>>,
+    /// The model, owned by value for the lifetime of this session. It is taken
+    /// out of `slot` by `CVManager::spawn_worker` and returned to `slot` when
+    /// the worker exits — so the shared mutex is never held across frames.
+    pub model: Model,
+    pub slot: Arc<Mutex<Option<Model>>>,
     pub shared: SharedFrame,
     pub core: ServiceCore<Inference>,
 }
@@ -16,8 +20,7 @@ pub struct CVWorker {
 impl CVWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
         thread::spawn(move || {
-            // ---------- Get reference to Model inside thread ----------
-            let mut model_lock = self.model.lock().unwrap();
+            let CVWorker { mut model, slot, shared, core } = self;
 
             let model = match model_lock.as_mut() {
                 Some(p) => p,
@@ -31,18 +34,18 @@ impl CVWorker {
             // polling: an idle pipeline parks here with zero wakeups, and a
             // stop wakes us with `None` so the loop exits.
             while let Some(frame) = self.shared.wait(&self.core.running) {
-                // ---------- Extract RGBA ----------
-                let (width, height, rgba) = (frame.0, frame.1, frame.2.data.clone());
+                // ---------- Extract dimensions (borrow pixels directly) ----------
+                let (width, height) = (frame.0, frame.1);
 
                 // ---------- Inference ----------
-                let (output, time_metrics, posture_angle_deg) =
-                    match model.process_rgba(&rgba, width, height) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            eprintln!("Inference error: {e}");
-                            continue;
-                        }
-                    };
+                let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&frame.2.data, width, height)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        eprintln!("Inference error: {e}");
+                        continue;
+                    }
+                };
 
                 // ---------- Publish result ----------
                 // Not pooled: the overlay is freshly rendered each frame and
@@ -55,6 +58,13 @@ impl CVWorker {
                     time_metrics,
                     posture_angle_deg,
                 });
+            }
+
+            // Return the model so the next session can reuse it. Don't clobber a
+            // model that was (re)loaded into the slot while we were running.
+            let mut slot = slot.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(model);
             }
         });
 

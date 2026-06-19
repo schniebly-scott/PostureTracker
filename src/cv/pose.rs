@@ -7,12 +7,40 @@ use std::{error::Error, fmt::Debug};
 use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
 pub type Keypoints = [Option<(f32, f32, f32)>; 17];
 
-#[derive(Debug)]
-
 pub struct PoseTask {
     inf_width: usize,
     inf_height: usize,
     confidence_threshold: f32,
+    /// Reusable ARGB backing buffer for the raqote draw target, kept across
+    /// frames so each render reuses this ~width*height allocation instead of
+    /// allocating a fresh one. `DrawTarget` itself isn't `Send` (and `PoseTask`
+    /// is shared across threads), so we hold the `Vec` and rebuild a target
+    /// around it per frame via `from_vec`/`into_vec`.
+    draw_buf: Vec<u32>,
+}
+
+// Eliding draw_buf: deriving Debug would dump the entire pixel buffer.
+impl Debug for PoseTask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoseTask")
+            .field("inf_width", &self.inf_width)
+            .field("inf_height", &self.inf_height)
+            .field("confidence_threshold", &self.confidence_threshold)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Computes letterbox parameters for fitting an `orig_w`×`orig_h` image into an
+/// `inf_w`×`inf_h` square while preserving aspect ratio. Returns the scaled
+/// content size, the symmetric padding offsets, and the scale factor such that
+/// `inference_coord = original_coord * ratio + pad`.
+fn letterbox(orig_w: u32, orig_h: u32, inf_w: u32, inf_h: u32) -> (u32, u32, f32, f32, f32) {
+    let ratio = (inf_w as f32 / orig_w as f32).min(inf_h as f32 / orig_h as f32);
+    let new_w = (orig_w as f32 * ratio).round();
+    let new_h = (orig_h as f32 * ratio).round();
+    let pad_x = (inf_w as f32 - new_w) / 2.0;
+    let pad_y = (inf_h as f32 - new_h) / 2.0;
+    (new_w as u32, new_h as u32, pad_x, pad_y, ratio)
 }
 
 impl PoseTask {
@@ -21,6 +49,7 @@ impl PoseTask {
             inf_width: INF_WIDTH,
             inf_height: INF_HEIGHT,
             confidence_threshold: CONFIDENCE_THRESHOLD,
+            draw_buf: Vec::new(),
         }
     }
 
@@ -36,31 +65,25 @@ impl PoseTask {
         // transpose to [8400, 56]
         let preds = preds.permuted_axes([1, 0]);
 
-        let mut best_conf = 0.0;
-        let mut best_row = None;
-
-        for row in preds.outer_iter() {
-            let conf = row[4];
-
-            if conf > best_conf {
-                best_conf = conf;
-                best_row = Some(row);
-            }
-        }
-
-        let row = best_row.ok_or("No detections")?;
+        // Pick the highest-confidence anchor; a zero best conf means no detection.
+        let row = preds
+            .outer_iter()
+            .max_by(|a, b| a[4].total_cmp(&b[4]))
+            .filter(|row| row[4] > 0.0)
+            .ok_or("No detections")?;
 
         let mut keypoints: Keypoints = [None; 17];
 
-        let scale_x = orig_w as f32 / self.inf_width as f32;
-        let scale_y = orig_h as f32 / self.inf_height as f32;
+        // Reverse the letterbox preprocess: subtract padding, then undo the scale.
+        let (_, _, pad_x, pad_y, ratio) =
+            letterbox(orig_w, orig_h, self.inf_width as u32, self.inf_height as u32);
         let kpt_start = KPT_START; // after bbox + obj + class
 
         for &k in &KEEP_KEYPOINTS {
             let base = kpt_start + k * 3;
 
-            let x = row[base] * scale_x as f32;
-            let y = row[base + 1] * scale_y as f32;
+            let x = (row[base] - pad_x) / ratio;
+            let y = (row[base + 1] - pad_y) / ratio;
             let conf = row[base + 2];
 
             keypoints[k] = Some((x, y, conf));
@@ -69,21 +92,34 @@ impl PoseTask {
         Ok(keypoints)
     }
 
-    fn render_pose(&self, keypoints: &Keypoints, width: u32, height: u32) -> Vec<u8> {
-        // ----- Draw -----
-        let mut dt = DrawTarget::new(width as i32, height as i32);
-        self.draw_skeleton(&mut dt, &keypoints);
+    fn render_pose(&mut self, keypoints: &Keypoints, width: u32, height: u32) -> Vec<u8> {
+        let confidence_threshold = self.confidence_threshold;
 
-        // ----- Extract RGBA back out -----
-        let data = dt.get_data();
-        let mut out = Vec::with_capacity((width * height * 4) as usize);
+        // ----- Draw onto a target backed by the reused buffer -----
+        // from_vec resizes the buffer to width*height; clear then overwrites any
+        // stale pixels, so the buffer's prior contents don't leak between frames.
+        let buf = std::mem::take(&mut self.draw_buf);
+        let mut dt = DrawTarget::from_vec(width as i32, height as i32, buf);
+        dt.clear(SolidSource {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        });
 
-        for px in data {
-            out.push((px >> 16) as u8); // R
-            out.push((px >> 8) as u8); // G
-            out.push(*px as u8); // B
-            out.push((px >> 24) as u8); // A
+        Self::draw_skeleton(&mut dt, keypoints, confidence_threshold);
+
+        // ----- Extract RGBA back out (ARGB u32 -> RGBA bytes), chunked -----
+        let mut out = vec![0u8; (width * height * 4) as usize];
+        for (px, dst) in dt.get_data().iter().zip(out.chunks_exact_mut(4)) {
+            dst[0] = (px >> 16) as u8; // R
+            dst[1] = (px >> 8) as u8; // G
+            dst[2] = *px as u8; // B
+            dst[3] = (px >> 24) as u8; // A
         }
+
+        // Reclaim the buffer for the next frame.
+        self.draw_buf = dt.into_vec();
         out
     }
 
@@ -115,10 +151,10 @@ impl PoseTask {
         Some(clamped.acos().to_degrees())
     }
 
-    fn draw_skeleton(&self, dt: &mut DrawTarget, keypoints: &Keypoints) {
+    fn draw_skeleton(dt: &mut DrawTarget, keypoints: &Keypoints, confidence_threshold: f32) {
         for &(i, j) in SKELETON {
             if let (Some((x1, y1, c1)), Some((x2, y2, c2))) = (keypoints[i], keypoints[j]) {
-                if c1 < self.confidence_threshold || c2 < self.confidence_threshold {
+                if c1 < confidence_threshold || c2 < confidence_threshold {
                     continue;
                 }
 
@@ -145,7 +181,7 @@ impl PoseTask {
         }
 
         for &(x, y, c) in keypoints.iter().flatten() {
-            if c < self.confidence_threshold {
+            if c < confidence_threshold {
                 continue;
             }
 
@@ -175,25 +211,29 @@ impl PoseTask {
         let hw = h * w;
         let scale = 1.0 / 255.0;
 
-        let x_ratio = width as f32 / w as f32;
-        let y_ratio = height as f32 / h as f32;
+        // Letterbox: preserve aspect ratio and pad the remainder with YOLO's gray
+        // (114) instead of stretching, which would degrade keypoint confidence.
+        // decode_yolo_pose reverses this exact transform.
+        let (new_w, new_h, pad_x, pad_y, ratio) = letterbox(width, height, w as u32, h as u32);
+        let pad_x = pad_x as usize;
+        let pad_y = pad_y as usize;
 
-        for y in 0..h {
-            let src_y = (y as f32 * y_ratio) as usize;
+        out.fill(114.0 * scale);
 
-            for x in 0..w {
-                let src_x = (x as f32 * x_ratio) as usize;
+        for y in 0..new_h as usize {
+            let src_y = (((y as f32) / ratio) as usize).min(height as usize - 1);
+            let dst_row = y + pad_y;
 
-                let src_i = ((src_y * width as usize + src_x) * 4) as usize;
-                let dst_i = y * w + x;
+            for x in 0..new_w as usize {
+                let src_x = (((x as f32) / ratio) as usize).min(width as usize - 1);
+                let dst_col = x + pad_x;
 
-                let r = rgba[src_i];
-                let g = rgba[src_i + 1];
-                let b = rgba[src_i + 2];
+                let src_i = (src_y * width as usize + src_x) * 4;
+                let dst_i = dst_row * w + dst_col;
 
-                out[dst_i] = r as f32 * scale;
-                out[hw + dst_i] = g as f32 * scale;
-                out[2 * hw + dst_i] = b as f32 * scale;
+                out[dst_i] = rgba[src_i] as f32 * scale;
+                out[hw + dst_i] = rgba[src_i + 1] as f32 * scale;
+                out[2 * hw + dst_i] = rgba[src_i + 2] as f32 * scale;
             }
         }
 
@@ -216,7 +256,7 @@ impl PoseTask {
         Ok(keypoints)
     }
 
-    pub fn render(&self, result: &Keypoints, width: u32, height: u32) -> Vec<u8> {
+    pub fn render(&mut self, result: &Keypoints, width: u32, height: u32) -> Vec<u8> {
         self.render_pose(result, width, height)
     }
 }
@@ -343,39 +383,43 @@ mod tests {
     }
 
     #[test]
-    fn decode_yolo_pose_extracts_and_scales_best_detection() {
+    fn decode_yolo_pose_extracts_and_undoes_letterbox() {
         let task = PoseTask::new();
         // Output tensor shape [1, 56, 8400]: 4 bbox + 1 conf + 17*3 keypoints.
         let mut preds = Array3::<f32>::zeros((1, 56, 8400));
 
+        // orig 1280x640 letterboxed into 640x640:
+        //   ratio = min(640/1280, 640/640) = 0.5
+        //   content = 640x320, pad_x = 0, pad_y = (640-320)/2 = 160
+        // Inference coords reverse as: orig = (coord - pad) / ratio.
+
         // Detection 0: high confidence, will be selected.
         preds[[0, 4, 0]] = 0.9;
-        // nose (k=0): base = KPT_START + 0*3 = 5
-        preds[[0, 5, 0]] = 100.0; // x
-        preds[[0, 6, 0]] = 50.0; // y
+        // nose (k=0): base = KPT_START + 0*3 = 5; inference-space center (320, 320).
+        preds[[0, 5, 0]] = 320.0; // x -> (320 - 0) / 0.5 = 640
+        preds[[0, 6, 0]] = 320.0; // y -> (320 - 160) / 0.5 = 320
         preds[[0, 7, 0]] = 0.8; // conf
-        // left shoulder (k=5): base = 5 + 15 = 20
-        preds[[0, 20, 0]] = 10.0;
-        preds[[0, 21, 0]] = 20.0;
+        // left shoulder (k=5): base = 5 + 15 = 20; inference-space (100, 200).
+        preds[[0, 20, 0]] = 100.0; // x -> (100 - 0) / 0.5 = 200
+        preds[[0, 21, 0]] = 200.0; // y -> (200 - 160) / 0.5 = 80
         preds[[0, 22, 0]] = 0.7;
 
         // Detection 1: lower confidence, should be ignored.
         preds[[0, 4, 1]] = 0.3;
         preds[[0, 5, 1]] = 999.0;
 
-        // orig 1280x640 => scale_x = 2.0, scale_y = 1.0
         let kp = task
             .decode_yolo_pose(preds.view(), 1280, 640)
             .expect("should decode");
 
         let (x, y, conf) = kp[0].expect("nose present");
-        assert!((x - 200.0).abs() < 1e-3, "nose x scaled: {x}");
-        assert!((y - 50.0).abs() < 1e-3, "nose y scaled: {y}");
+        assert!((x - 640.0).abs() < 1e-3, "nose x unletterboxed: {x}");
+        assert!((y - 320.0).abs() < 1e-3, "nose y unletterboxed: {y}");
         assert!((conf - 0.8).abs() < 1e-6);
 
         let (lx, ly, _) = kp[5].expect("left shoulder present");
-        assert!((lx - 20.0).abs() < 1e-3, "left x scaled: {lx}");
-        assert!((ly - 20.0).abs() < 1e-3, "left y scaled: {ly}");
+        assert!((lx - 200.0).abs() < 1e-3, "left x unletterboxed: {lx}");
+        assert!((ly - 80.0).abs() < 1e-3, "left y unletterboxed: {ly}");
     }
 
     #[test]
@@ -388,7 +432,7 @@ mod tests {
 
     #[test]
     fn render_returns_rgba_buffer_of_expected_size() {
-        let task = PoseTask::new();
+        let mut task = PoseTask::new();
         let kp = keypoints(
             Some((2.0, 2.0, 1.0)),
             Some((1.0, 5.0, 1.0)),
@@ -396,5 +440,52 @@ mod tests {
         );
         let out = task.render(&kp, 10, 10);
         assert_eq!(out.len(), 10 * 10 * 4);
+    }
+
+    #[test]
+    fn render_reuses_target_across_different_frame_sizes() {
+        // Reusing the backing buffer must still produce correctly sized output
+        // when the frame size changes (buffer resizes) and when it stays the same.
+        let mut task = PoseTask::new();
+        let kp = keypoints(Some((2.0, 2.0, 1.0)), None, None);
+
+        assert_eq!(task.render(&kp, 10, 10).len(), 10 * 10 * 4);
+        assert_eq!(task.render(&kp, 20, 8).len(), 20 * 8 * 4);
+        assert_eq!(task.render(&kp, 10, 10).len(), 10 * 10 * 4);
+    }
+
+    #[test]
+    fn letterbox_centers_content_and_preserves_aspect() {
+        // 1280x640 into 640x640: half scale, padded top and bottom.
+        let (new_w, new_h, pad_x, pad_y, ratio) = letterbox(1280, 640, 640, 640);
+        assert_eq!((new_w, new_h), (640, 320));
+        assert_eq!((pad_x, pad_y), (0.0, 160.0));
+        assert!((ratio - 0.5).abs() < 1e-6);
+
+        // A square source needs no padding and maps 1:1.
+        let (sw, sh, spx, spy, sratio) = letterbox(640, 640, 640, 640);
+        assert_eq!((sw, sh), (640, 640));
+        assert_eq!((spx, spy), (0.0, 0.0));
+        assert!((sratio - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn preprocess_rgba_letterboxes_non_square_input() {
+        let task = PoseTask::new();
+        // Solid red 1280x640 frame; letterboxed into 640x640 the content occupies
+        // rows 160..480, leaving gray (114/255) padding above and below.
+        let rgba: Vec<u8> = [255u8, 0, 0, 255].repeat(1280 * 640);
+        let out = task.preprocess_rgba(&rgba, 1280, 640);
+
+        let gray = 114.0 / 255.0;
+        // Padding row (10 < 160): all channels gray.
+        assert!((out[[0, 0, 10, 300]] - gray).abs() < 1e-6);
+        assert!((out[[0, 1, 10, 300]] - gray).abs() < 1e-6);
+        assert!((out[[0, 2, 10, 300]] - gray).abs() < 1e-6);
+
+        // Content row (300 within 160..480): red.
+        assert!((out[[0, 0, 300, 300]] - 1.0).abs() < 1e-6);
+        assert_eq!(out[[0, 1, 300, 300]], 0.0);
+        assert_eq!(out[[0, 2, 300, 300]], 0.0);
     }
 }
