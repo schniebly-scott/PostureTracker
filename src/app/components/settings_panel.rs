@@ -113,6 +113,7 @@ fn cooldown_field(app: &App) -> Element<'_, Message> {
     let input = row![
         text_input("60", &app.cooldown_input)
             .on_input(Message::CooldownInputChanged)
+            .on_submit(Message::CommitConfig)
             .size(14)
             .width(Length::Fixed(80.0))
             .padding([8, 12]),

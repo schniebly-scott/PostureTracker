@@ -156,6 +156,7 @@ fn interval_field(app: &App) -> Element<'_, Message> {
             row![
                 text_input("min", &app.custom_interval_input)
                     .on_input(Message::CustomIntervalInputChanged)
+                    .on_submit(Message::CommitConfig)
                     .width(70),
                 text("minutes").size(12).color(T3),
             ]
