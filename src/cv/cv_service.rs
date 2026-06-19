@@ -54,4 +54,12 @@ impl ManagedService for CVManager {
         }
         .spawn()
     }
+
+    /// The worker blocks on the shared frame channel, so clearing `running`
+    /// isn't enough on its own — wake the channel too, otherwise a worker
+    /// waiting on an idle (stopped) camera would never observe the stop.
+    fn stop(&self) {
+        self.core.running.store(false, Ordering::SeqCst);
+        self.shared.wake();
+    }
 }

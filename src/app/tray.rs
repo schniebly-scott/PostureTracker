@@ -1,13 +1,13 @@
 use std::path::Path;
 use std::panic::{self, AssertUnwindSafe};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use iced::Subscription;
 use iced::advanced::subscription as iced_subscription;
 use iced::advanced::subscription::Hasher;
 use iced::futures::stream;
-use tokio::time::sleep;
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
+use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 #[derive(Debug, Clone)]
@@ -21,8 +21,10 @@ pub struct TrayState {
     _menu: Menu,
     _open_item: MenuItem,
     _quit_item: MenuItem,
-    open_id: MenuId,
-    quit_id: MenuId,
+    /// Receiver for menu activations pushed by the global event handler. Wrapped
+    /// so the (re-created-per-render) subscription recipe can take ownership the
+    /// first time its stream runs; see `TraySubscription::stream`.
+    event_rx: Arc<Mutex<Option<UnboundedReceiver<Event>>>>,
 }
 
 impl TrayState {
@@ -43,21 +45,37 @@ impl TrayState {
 
         let tray_icon = build_tray_icon(menu.clone())?;
 
+        // Forward menu activations straight into a channel instead of polling
+        // muda's event receiver. The handler is process-global and backed by a
+        // `OnceCell` that only honours its first `Some`, so this must run exactly
+        // once — `TrayState::new` is constructed a single time at startup.
+        let (tx, rx) = mpsc::unbounded_channel();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let mapped = if event.id == open_id {
+                Some(Event::OpenRequested)
+            } else if event.id == quit_id {
+                Some(Event::QuitRequested)
+            } else {
+                None
+            };
+            if let Some(event) = mapped {
+                // The receiver lives for the app's lifetime; a send error only
+                // means we're shutting down, so dropping the event is fine.
+                let _ = tx.send(event);
+            }
+        }));
+
         Ok(Self {
             _tray_icon: tray_icon,
             _menu: menu,
             _open_item: open_item,
             _quit_item: quit_item,
-            open_id,
-            quit_id,
+            event_rx: Arc::new(Mutex::new(Some(rx))),
         })
     }
 
     pub fn subscription(&self) -> Subscription<Event> {
-        iced_subscription::from_recipe(TraySubscription::new(
-            self.open_id.clone(),
-            self.quit_id.clone(),
-        ))
+        iced_subscription::from_recipe(TraySubscription::new(self.event_rx.clone()))
     }
 }
 
@@ -121,13 +139,12 @@ fn ensure_tray_runtime_available() -> Result<(), String> {
 }
 
 struct TraySubscription {
-    open_id: MenuId,
-    quit_id: MenuId,
+    event_rx: Arc<Mutex<Option<UnboundedReceiver<Event>>>>,
 }
 
 impl TraySubscription {
-    fn new(open_id: MenuId, quit_id: MenuId) -> Self {
-        Self { open_id, quit_id }
+    fn new(event_rx: Arc<Mutex<Option<UnboundedReceiver<Event>>>>) -> Self {
+        Self { event_rx }
     }
 }
 
@@ -137,28 +154,23 @@ impl iced_subscription::Recipe for TraySubscription {
     fn hash(&self, state: &mut Hasher) {
         use std::hash::Hash;
         std::any::TypeId::of::<Self>().hash(state);
-        self.open_id.hash(state);
-        self.quit_id.hash(state);
     }
 
     fn stream(
         self: Box<Self>,
         _input: stream::BoxStream<iced_subscription::Event>,
     ) -> stream::BoxStream<Self::Output> {
-        let open_id = self.open_id;
-        let quit_id = self.quit_id;
+        // The recipe hashes to a constant, so iced keeps a single stream alive
+        // for the app's lifetime and only polls this first instance. Take the
+        // receiver so that long-lived stream owns it; any duplicate recipe finds
+        // `None` and ends immediately rather than competing for events.
+        let rx = self.event_rx.lock().unwrap().take();
 
         let s = async_stream::stream! {
-            loop {
-                while let Ok(event) = MenuEvent::receiver().try_recv() {
-                    if event.id == open_id {
-                        yield Event::OpenRequested;
-                    } else if event.id == quit_id {
-                        yield Event::QuitRequested;
-                    }
+            if let Some(mut rx) = rx {
+                while let Some(event) = rx.recv().await {
+                    yield event;
                 }
-
-                sleep(Duration::from_millis(100)).await;
             }
         };
 

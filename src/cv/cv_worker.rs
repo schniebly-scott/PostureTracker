@@ -1,6 +1,5 @@
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::{error::Error, thread};
 
 use super::{Inference, cv_inference::Model};
@@ -28,19 +27,16 @@ impl CVWorker {
                 }
             };
 
-            while self.core.running.load(Ordering::SeqCst) {
-                let frame_opt = {
-                    let mut slot = self.shared.lock().unwrap();
-                    slot.take() // take() = replace with None
-                };
+            // Block until a frame is published or the pipeline is stopped. No
+            // polling: an idle pipeline parks here with zero wakeups, and a
+            // stop wakes us with `None` so the loop exits.
+            while let Some(frame) = self.shared.wait(&self.core.running) {
+                // ---------- Extract RGBA ----------
+                let (width, height, rgba) = (frame.0, frame.1, frame.2.data.clone());
 
-                if let Some(frame) = frame_opt {
-                    // ---------- Extract RGBA ----------
-                    let (width, height, rgba) = (frame.0, frame.1, frame.2.data.clone());
-
-                    // ---------- Inference ----------
-                    let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&rgba, width, height)
-                    {
+                // ---------- Inference ----------
+                let (output, time_metrics, posture_angle_deg) =
+                    match model.process_rgba(&rgba, width, height) {
                         Ok(o) => o,
                         Err(e) => {
                             eprintln!("Inference error: {e}");
@@ -48,21 +44,17 @@ impl CVWorker {
                         }
                     };
 
-                    // ---------- Publish result ----------
-                    // Not pooled: the overlay is freshly rendered each frame and
-                    // never recycled, so returning it to a pool only grows that
-                    // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
-                    let buf = RgbaBuffer::unpooled(output);
+                // ---------- Publish result ----------
+                // Not pooled: the overlay is freshly rendered each frame and
+                // never recycled, so returning it to a pool only grows that
+                // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
+                let buf = RgbaBuffer::unpooled(output);
 
-                    let _ = self.core.tx.send(Inference {
-                        frame: (width, height, Arc::new(buf)),
-                        time_metrics,
-                        posture_angle_deg,
-                    });
-                } else {
-                    //No frame available, yield CPU
-                    std::thread::sleep(Duration::from_millis(5));
-                }
+                let _ = self.core.tx.send(Inference {
+                    frame: (width, height, Arc::new(buf)),
+                    time_metrics,
+                    posture_angle_deg,
+                });
             }
         });
 
