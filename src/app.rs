@@ -187,6 +187,14 @@ pub struct App {
     pub available_cameras: Vec<crate::camera::CameraOption>,
     pub camera_prompt_open: bool,
 
+    /// Set when a text field (custom interval, alert cooldown) has accepted a
+    /// keystroke whose value isn't on disk yet. Keystrokes only mutate
+    /// in-memory state; the write is deferred to a commit point (Enter,
+    /// leaving the field's page, interval choice change, or quit) where
+    /// `flush_config` runs. Mirrors the slider's edit-then-commit pattern and
+    /// avoids a full TOML rewrite per keystroke.
+    config_dirty: bool,
+
     config: Config,
 }
 
@@ -206,6 +214,8 @@ pub enum Message {
     SampleIntervalChoiceChanged(SampleIntervalChoice),
     CustomIntervalInputChanged(String),
     CooldownInputChanged(String),
+    /// Persist deferred text-field edits (fired on Enter in a text input).
+    CommitConfig,
     ForceDismissToggled(bool),
     BackgroundSampleTick,
     DismissAlert,
@@ -280,6 +290,7 @@ impl App {
                 view: View::Dashboard,
                 available_cameras,
                 camera_prompt_open,
+                config_dirty: false,
                 config,
             },
             open_main_window.discard(),
@@ -318,6 +329,17 @@ impl App {
         self.config.background.alert_cooldown_secs = self.alert_cooldown.as_secs();
         if let Err(e) = self.config.save(config_path()) {
             eprintln!("Failed to save config: {e}");
+        }
+        // Whatever was pending is now on disk (re-derived above).
+        self.config_dirty = false;
+    }
+
+    /// Write config only if a deferred text-field edit is pending. Called at
+    /// commit points (Enter, leaving the settings page, quitting) so deferred
+    /// edits aren't lost without forcing a write when nothing changed.
+    fn flush_config(&mut self) {
+        if self.config_dirty {
+            self.save_config();
         }
     }
 
@@ -536,6 +558,16 @@ impl App {
             }
             Message::WindowCloseRequested(window_id) => {
                 if window_id == self.main_window_id {
+                    // When a tray icon is available and a session is active,
+                    // treat ✕ as hide-to-tray rather than quitting outright so
+                    // background tracking keeps running (the tray can restore
+                    // the window). Without a tray, hiding would strand the app
+                    // with no way back, so fall through to a clean quit.
+                    let session_active =
+                        matches!(self.run_mode, RunMode::Background) || self.metrics.is_tracking();
+                    if self.has_system_tray() && session_active {
+                        return self.update(Message::HideMainWindowPressed);
+                    }
                     return self.update(Message::QuitRequested);
                 } else if self.debug_window_id == Some(window_id) {
                     self.debug_window_id = None;
@@ -557,7 +589,15 @@ impl App {
                     window::gain_focus(self.main_window_id),
                 ])
             }
-            Message::QuitRequested => iced::exit(),
+            Message::QuitRequested => {
+                // Flush the open tracking interval so the append-only log gets a
+                // matching `Stop` event; otherwise the session's tracked time is
+                // dropped on next launch (unmatched `Start`s are ignored).
+                self.metrics.stop_tracking();
+                // Final flush for any text-field edit not yet committed.
+                self.flush_config();
+                iced::exit()
+            }
             Message::OpenDebugWindowPressed => {
                 if self.debug_window_id.is_some() {
                     Task::none()
@@ -573,14 +613,12 @@ impl App {
                     return Task::none();
                 }
 
-                self.pipelines
-                    .camera_manager
-                    .start()
-                    .expect("Unable to start camera");
-                self.pipelines
-                    .cv_manager
-                    .start()
-                    .expect("Unable to start model");
+                if let Err(e) = self.pipelines.camera_manager.start() {
+                    eprintln!("Unable to start camera: {e}");
+                }
+                if let Err(e) = self.pipelines.cv_manager.start() {
+                    eprintln!("Unable to start model: {e}");
+                }
                 self.posture_angle_deg = None;
                 self.bad_posture = false;
                 self.run_mode = RunMode::Foreground;
@@ -643,20 +681,29 @@ impl App {
             Message::CustomIntervalInputChanged(input) => {
                 self.sample_interval_choice = SampleIntervalChoice::Custom;
                 self.custom_interval_input = input;
-                self.save_config();
+                // Keep keystrokes in-memory; persist at a commit point so we
+                // don't rewrite config (and rebuild the timer subscription) on
+                // every character, and don't persist transient values like the
+                // 60s fallback while the field reads "1".
+                self.config_dirty = true;
                 Task::none()
             }
             Message::CooldownInputChanged(input) => {
                 self.cooldown_input = input;
-                // Only commit values at/above the floor. Too-low or invalid
+                // Only accept values at/above the floor. Too-low or invalid
                 // input keeps the last valid cooldown while the settings page
-                // shows a warning.
+                // shows a warning. The accepted value is held in memory and
+                // written at a commit point.
                 if let Ok(secs) = self.cooldown_input.trim().parse::<u64>() {
                     if secs >= MIN_ALERT_COOLDOWN_SECS {
                         self.alert_cooldown = Duration::from_secs(secs);
-                        self.save_config();
+                        self.config_dirty = true;
                     }
                 }
+                Task::none()
+            }
+            Message::CommitConfig => {
+                self.flush_config();
                 Task::none()
             }
             Message::ForceDismissToggled(value) => {
@@ -771,6 +818,8 @@ impl App {
                 Task::none()
             }
             Message::CloseSettingsPressed => {
+                // Leaving the settings page commits the cooldown field.
+                self.flush_config();
                 self.view = View::Dashboard;
                 Task::none()
             }

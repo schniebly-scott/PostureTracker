@@ -73,8 +73,9 @@ impl CameraWorker {
 
                         let captured_frame: Frame = (width, height, Arc::new(buf));
 
-                        let mut slot = self.shared.lock().unwrap();
-                        *slot = Some(captured_frame.clone());
+                        // Hand the latest frame to the CV worker (overwriting any
+                        // it hasn't taken yet) and fan it out to the UI.
+                        self.shared.publish(captured_frame.clone());
 
                         let _ = self.core.tx.send(captured_frame);
                     }
@@ -88,6 +89,10 @@ impl CameraWorker {
                     }
                 }
             }
+
+            // No more frames will arrive; wake the CV worker so it observes the
+            // stop and leaves its blocking wait instead of parking forever.
+            self.shared.wake();
         });
         Ok(())
     }

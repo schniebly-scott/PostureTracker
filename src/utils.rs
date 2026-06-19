@@ -12,7 +12,33 @@ pub trait ManagedService {
 
     fn core(&self) -> &ServiceCore<Self::Output>;
 
-    fn start(&self) -> Result<(), Box<dyn Error>>;
+    /// Spawn the background worker. Called by `start` only after the running
+    /// flag has been claimed; implementors must not toggle `running`
+    /// themselves.
+    fn spawn_worker(&self) -> Result<(), Box<dyn Error>>;
+
+    /// Start the service. Claims the running flag atomically and rejects a
+    /// second start while a worker is already live — this closes the
+    /// double-spawn race for every `ManagedService` in one place (see
+    /// issue_writeups/cv_worker_model_mutex.md).
+    fn start(&self) -> Result<(), Box<dyn Error>> {
+        if self
+            .core()
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err("service is already running".into());
+        }
+
+        // Clear the flag if spawning fails so the next start can retry.
+        if let Err(e) = self.spawn_worker() {
+            self.core().running.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+
+        Ok(())
+    }
 
     fn is_running(&self) -> bool {
         self.core().running.load(Ordering::SeqCst)
@@ -60,8 +86,7 @@ mod tests {
             &self.core
         }
 
-        fn start(&self) -> Result<(), Box<dyn Error>> {
-            self.core.running.store(true, Ordering::SeqCst);
+        fn spawn_worker(&self) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
     }
@@ -91,6 +116,22 @@ mod tests {
         assert!(svc.is_running());
         svc.stop();
         assert!(!svc.is_running());
+    }
+
+    #[test]
+    fn start_rejects_second_start_while_running() {
+        let svc = DummyService {
+            core: ServiceCore::new(4),
+        };
+
+        assert!(svc.start().is_ok());
+        // A second start without an intervening stop must be rejected rather
+        // than silently spawning an overlapping worker.
+        assert!(svc.start().is_err());
+
+        svc.stop();
+        // After stopping, the service can be started again.
+        assert!(svc.start().is_ok());
     }
 
     #[test]

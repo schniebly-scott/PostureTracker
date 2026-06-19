@@ -1,6 +1,5 @@
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::{error::Error, thread};
 
 use super::{Inference, cv_inference::Model};
@@ -9,7 +8,11 @@ use crate::camera::RgbaBuffer;
 use crate::utils::ServiceCore;
 
 pub struct CVWorker {
-    pub model: Arc<Mutex<Option<Model>>>,
+    /// The model, owned by value for the lifetime of this session. It is taken
+    /// out of `slot` by `CVManager::spawn_worker` and returned to `slot` when
+    /// the worker exits — so the shared mutex is never held across frames.
+    pub model: Model,
+    pub slot: Arc<Mutex<Option<Model>>>,
     pub shared: SharedFrame,
     pub core: ServiceCore<Inference>,
 }
@@ -17,8 +20,7 @@ pub struct CVWorker {
 impl CVWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
         thread::spawn(move || {
-            // ---------- Get reference to Model inside thread ----------
-            let mut model_lock = self.model.lock().unwrap();
+            let CVWorker { mut model, slot, shared, core } = self;
 
             let model = match model_lock.as_mut() {
                 Some(p) => p,
@@ -28,41 +30,41 @@ impl CVWorker {
                 }
             };
 
-            while self.core.running.load(Ordering::SeqCst) {
-                let frame_opt = {
-                    let mut slot = self.shared.lock().unwrap();
-                    slot.take() // take() = replace with None
+            // Block until a frame is published or the pipeline is stopped. No
+            // polling: an idle pipeline parks here with zero wakeups, and a
+            // stop wakes us with `None` so the loop exits.
+            while let Some(frame) = self.shared.wait(&self.core.running) {
+                // ---------- Extract dimensions (borrow pixels directly) ----------
+                let (width, height) = (frame.0, frame.1);
+
+                // ---------- Inference ----------
+                let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&frame.2.data, width, height)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        eprintln!("Inference error: {e}");
+                        continue;
+                    }
                 };
 
-                if let Some(frame) = frame_opt {
-                    // ---------- Extract dimensions (borrow pixels directly) ----------
-                    let (width, height) = (frame.0, frame.1);
+                // ---------- Publish result ----------
+                // Not pooled: the overlay is freshly rendered each frame and
+                // never recycled, so returning it to a pool only grows that
+                // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
+                let buf = RgbaBuffer::unpooled(output);
 
-                    // ---------- Inference ----------
-                    let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&frame.2.data, width, height)
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            eprintln!("Inference error: {e}");
-                            continue;
-                        }
-                    };
+                let _ = self.core.tx.send(Inference {
+                    frame: (width, height, Arc::new(buf)),
+                    time_metrics,
+                    posture_angle_deg,
+                });
+            }
 
-                    // ---------- Publish result ----------
-                    // Not pooled: the overlay is freshly rendered each frame and
-                    // never recycled, so returning it to a pool only grows that
-                    // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
-                    let buf = RgbaBuffer::unpooled(output);
-
-                    let _ = self.core.tx.send(Inference {
-                        frame: (width, height, Arc::new(buf)),
-                        time_metrics,
-                        posture_angle_deg,
-                    });
-                } else {
-                    //No frame available, yield CPU
-                    std::thread::sleep(Duration::from_millis(5));
-                }
+            // Return the model so the next session can reuse it. Don't clobber a
+            // model that was (re)loaded into the slot while we were running.
+            let mut slot = slot.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(model);
             }
         });
 
