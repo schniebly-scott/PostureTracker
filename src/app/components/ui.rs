@@ -92,8 +92,8 @@ pub mod glyph {
 /// An icon glyph rendered in the bundled [`ICONS`] font at `size`. Set the
 /// color on the returned text as usual. Always build icons through this helper
 /// (or [`icon_button`]) rather than putting a glyph in a plain `text`.
-pub fn icon(glyph: &str, size: u16) -> text::Text<'static> {
-    text(glyph.to_string())
+pub fn icon(glyph: &str, size: u16) -> text::Text<'_> {
+    text(glyph)
         .size(size as f32)
         .font(ICONS)
         .wrapping(text::Wrapping::None)
@@ -297,7 +297,7 @@ pub fn disabled_button(label: Element<'_, Message>) -> button::Button<'_, Messag
 /// otherwise the segment is transparent and only brightens its text on hover.
 pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'_, Message> {
     button(
-        text(label.to_string())
+        text(label)
             .size(13)
             .font(semibold())
             .wrapping(text::Wrapping::None),
@@ -323,7 +323,7 @@ pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'
 }
 
 /// Quiet square icon button for toolbars / titlebar.
-pub fn icon_button(glyph: &str, size: u16) -> button::Button<'static, Message> {
+pub fn icon_button(glyph: &'static str, size: u16) -> button::Button<'static, Message> {
     button(icon(glyph, size).color(T3))
         .padding([6, 8])
         .style(|_theme, status| {
