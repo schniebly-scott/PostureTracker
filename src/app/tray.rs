@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::panic::{self, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use iced::Subscription;
@@ -80,15 +80,20 @@ impl TrayState {
 }
 
 fn build_tray_icon(menu: Menu) -> Result<TrayIcon, String> {
+    let icon = app_icon()?;
     let previous_hook = panic::take_hook();
     panic::set_hook(Box::new(|_| {}));
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_tooltip("PostureTracker")
-            .with_icon(app_icon())
-            .with_menu(Box::new(menu))
-            .build()
+            .with_icon(icon)
+            .with_menu(Box::new(menu));
+
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_icon_as_template(true);
+
+        builder.build()
     }));
 
     panic::set_hook(previous_hook);
@@ -178,32 +183,66 @@ impl iced_subscription::Recipe for TraySubscription {
     }
 }
 
-fn app_icon() -> Icon {
-    let width = 32;
-    let height = 32;
-    let mut rgba = vec![0_u8; width * height * 4];
+#[cfg(target_os = "macos")]
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../../assets/icons/tray/tray-icon-template-24.png");
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * 4;
-            let border = x < 3 || x >= width - 3 || y < 3 || y >= height - 3;
-            let accent = (12..20).contains(&x) || (12..20).contains(&y);
+#[cfg(target_os = "windows")]
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../../assets/icons/tray/tray-icon-16.png");
 
-            let (r, g, b, a) = if border {
-                (21, 101, 192, 255)
-            } else if accent {
-                (95, 181, 255, 255)
-            } else {
-                (9, 23, 38, 255)
-            };
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../../assets/icons/tray/tray-icon-48.png");
 
-            rgba[idx] = r;
-            rgba[idx + 1] = g;
-            rgba[idx + 2] = b;
-            rgba[idx + 3] = a;
+fn app_icon() -> Result<Icon, String> {
+    let image = image::load_from_memory_with_format(TRAY_ICON_PNG, image::ImageFormat::Png)
+        .map_err(|error| format!("unable to decode embedded tray icon: {error}"))?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+
+    Icon::from_rgba(image.into_raw(), width, height)
+        .map_err(|error| format!("unable to create tray icon: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tray_icon_assets_have_expected_dimensions_and_transparency() {
+        let assets = [
+            (
+                include_bytes!("../../assets/icons/tray/tray-icon-16.png").as_slice(),
+                16,
+            ),
+            (
+                include_bytes!("../../assets/icons/tray/tray-icon-24.png").as_slice(),
+                24,
+            ),
+            (
+                include_bytes!("../../assets/icons/tray/tray-icon-32.png").as_slice(),
+                32,
+            ),
+            (
+                include_bytes!("../../assets/icons/tray/tray-icon-48.png").as_slice(),
+                48,
+            ),
+            (
+                include_bytes!("../../assets/icons/tray/tray-icon-template-24.png").as_slice(),
+                24,
+            ),
+        ];
+
+        for (png, expected_size) in assets {
+            let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+                .expect("embedded tray icon should be a valid PNG")
+                .into_rgba8();
+
+            assert_eq!(image.dimensions(), (expected_size, expected_size));
+            assert!(
+                image.pixels().any(|pixel| pixel.0[3] == 0),
+                "tray icon should have a transparent background"
+            );
+            assert!(
+                image.pixels().any(|pixel| pixel.0[3] > 0),
+                "tray icon should contain a visible mark"
+            );
         }
     }
-
-    Icon::from_rgba(rgba, width as u32, height as u32)
-        .expect("tray icon pixels should be valid")
 }
