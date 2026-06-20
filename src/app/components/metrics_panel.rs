@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use iced::border::Border;
-use iced::widget::{button, column, container, progress_bar, row, stack, text, Space};
+use iced::widget::{button, column, container, progress_bar, row, scrollable, stack, text, Space};
 use iced::{Alignment, Background, Color, Element, Length, Padding};
 
 use crate::app::components::slide::slide;
@@ -133,11 +133,49 @@ fn view_body(app: &App) -> Element<'_, Message> {
         None => (None, SlideDirection::Right, 1.0),
     };
 
-    container(slide(current, previous, progress, direction))
+    // Scroll rather than clip when the cards are taller than the space the panel
+    // can give the body. The cards are sized by their (fixed) font + padding, so
+    // when the window is short — dragged small, at the min size, or shrunk by
+    // Windows display scaling — the body's share of the height drops below the
+    // cards' natural height. Clipping there slices the bottom card's value; a
+    // scrollable degrades gracefully instead and keeps every value reachable.
+    scrollable(slide(current, previous, progress, direction))
         .width(Length::Fill)
         .height(Length::Fill)
-        .clip(true)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new().width(6).scroller_width(6),
+        ))
+        .style(metrics_scrollbar_style)
         .into()
+}
+
+/// A thin, unobtrusive scrollbar tuned to the dark panel: the rail stays
+/// invisible and only the scroller shows, brightening slightly on hover/drag.
+fn metrics_scrollbar_style(
+    theme: &iced::Theme,
+    status: scrollable::Status,
+) -> scrollable::Style {
+    let highlighted = matches!(
+        status,
+        scrollable::Status::Hovered { is_vertical_scrollbar_hovered: true, .. }
+            | scrollable::Status::Dragged { is_vertical_scrollbar_dragged: true, .. }
+    );
+    let rail = scrollable::Rail {
+        background: None,
+        border: Border::default(),
+        scroller: scrollable::Scroller {
+            background: Background::Color(Color {
+                a: if highlighted { 0.45 } else { 0.25 },
+                ..T1
+            }),
+            border: Border::default().rounded(3),
+        },
+    };
+    scrollable::Style {
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        ..scrollable::default(theme, status)
+    }
 }
 
 fn view_category(app: &App, category: MetricsCategory) -> Element<'_, Message> {
