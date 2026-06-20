@@ -8,6 +8,8 @@ use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
 use crate::metrics::HISTORY_SECS;
 
+const STATUS_PANEL_MAX_WIDTH: f32 = 1072.0;
+
 #[derive(Clone, Copy)]
 enum BadgeKind {
     Neutral,
@@ -266,6 +268,10 @@ fn graph_card(app: &App) -> Element<'_, Message> {
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    view_with_height(app, Length::FillPortion(5))
+}
+
+pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
     let (kind, label, status_line) = live_status(app);
 
     let left = column![
@@ -277,10 +283,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
         dismiss_toggle(app),
     ]
     .spacing(16)
-    // Reflows with the window but stays narrow enough to keep the controls
-    // readable; the graph card to its right takes the remaining width.
-    .width(Length::FillPortion(2))
-    .max_width(366.0);
+    // Fixed width so the status controls keep a stable, readable size; the
+    // graph card to its right is the row's only fill child, so it absorbs the
+    // extra width. (A `max_width` on a FillPortion child is a no-op here:
+    // iced's flex layout pins a fill main-axis child to min == max == its
+    // portion, so the cap is clamped away.)
+    .width(Length::Fixed(366.0));
 
     let body = row![left, graph_card(app)]
         .spacing(22)
@@ -289,7 +297,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
     container(body)
         .style(ui::panel_alert_style(app.bad_posture))
         .padding(16)
+        // Width is the cross axis of the dashboard's vertical column here, so
+        // (unlike a row's main axis) `max_width` is honored: the panel fills
+        // the width up to this cap, then stops stretching on wide displays.
         .width(Fill)
-        .height(Length::FillPortion(5))
+        .max_width(STATUS_PANEL_MAX_WIDTH)
+        .height(height)
         .into()
 }
