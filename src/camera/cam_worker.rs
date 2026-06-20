@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 use crate::SharedFrame;
 use crate::camera::RgbaBuffer;
@@ -13,10 +14,59 @@ use crate::utils::ServiceCore;
 
 use super::Frame;
 
+const MAX_CONSECUTIVE_CAPTURE_FAILURES: usize = 5;
+const CAPTURE_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+#[derive(Default)]
+struct ConsecutiveFailures {
+    count: usize,
+}
+
+impl ConsecutiveFailures {
+    fn record_failure(&mut self) -> bool {
+        self.count += 1;
+        self.count >= MAX_CONSECUTIVE_CAPTURE_FAILURES
+    }
+
+    fn record_success(&mut self) {
+        self.count = 0;
+    }
+}
+
 pub struct CameraWorker {
     pub config: CameraConfig,
     pub core: ServiceCore<Frame>,
+    pub failure_tx: broadcast::Sender<String>,
     pub shared: SharedFrame,
+}
+
+fn handle_capture_failure(
+    failures: &mut ConsecutiveFailures,
+    detail: String,
+    core: &ServiceCore<Frame>,
+    failure_tx: &broadcast::Sender<String>,
+) -> bool {
+    // A stop can race with a pending grab. In that case this is an intentional
+    // shutdown, not a camera failure that should be shown to the user.
+    if !core.running.load(Ordering::SeqCst) {
+        return true;
+    }
+
+    eprintln!("Camera capture failed: {detail}");
+    if !failures.record_failure() {
+        thread::sleep(CAPTURE_RETRY_DELAY);
+        return false;
+    }
+
+    let message = format!(
+        "Camera stopped after {MAX_CONSECUTIVE_CAPTURE_FAILURES} consecutive capture failures: \
+         {detail}. Check that it is connected and allowed in system privacy settings, then \
+         select it again in Settings."
+    );
+    eprintln!("{message}");
+    core.running.store(false, Ordering::SeqCst);
+    let _ = failure_tx.send(message);
+    true
 }
 
 impl CameraWorker {
@@ -58,11 +108,41 @@ impl CameraWorker {
 
         thread::spawn(move || {
             let frame_len = (width * height * 4) as usize;
+            let mut failures = ConsecutiveFailures::default();
 
             while self.core.running.load(Ordering::SeqCst) {
                 match camera.grab_frame(3000) {
                     Ok(Some(frame)) => {
-                        let data = frame.data().unwrap();
+                        let data = match frame.data() {
+                            Ok(data) => data,
+                            Err(e) => {
+                                if handle_capture_failure(
+                                    &mut failures,
+                                    format!("unable to read frame data: {e}"),
+                                    &self.core,
+                                    &self.failure_tx,
+                                ) {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        if data.len() != frame_len {
+                            if handle_capture_failure(
+                                &mut failures,
+                                format!(
+                                    "received {} bytes for a {frame_len}-byte RGBA frame",
+                                    data.len()
+                                ),
+                                &self.core,
+                                &self.failure_tx,
+                            ) {
+                                break;
+                            }
+                            continue;
+                        }
+                        failures.record_success();
+
                         let mut rgba = {
                             let mut pool = pool.lock().unwrap();
                             pool.pop().unwrap_or_else(|| vec![0u8; frame_len])
@@ -80,12 +160,24 @@ impl CameraWorker {
                         let _ = self.core.tx.send(captured_frame);
                     }
                     Ok(None) => {
-                        eprintln!("Unable to capture frame");
-                        thread::sleep(Duration::from_millis(100));
+                        if handle_capture_failure(
+                            &mut failures,
+                            "capture timed out without a frame".to_string(),
+                            &self.core,
+                            &self.failure_tx,
+                        ) {
+                            break;
+                        }
                     }
                     Err(e) => {
-                        eprintln!("Camera capture failed: {}", e);
-                        thread::sleep(Duration::from_millis(100));
+                        if handle_capture_failure(
+                            &mut failures,
+                            e.to_string(),
+                            &self.core,
+                            &self.failure_tx,
+                        ) {
+                            break;
+                        }
                     }
                 }
             }
@@ -95,5 +187,32 @@ impl CameraWorker {
             self.shared.wake();
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consecutive_failures_stop_at_the_limit() {
+        let mut failures = ConsecutiveFailures::default();
+
+        for _ in 1..MAX_CONSECUTIVE_CAPTURE_FAILURES {
+            assert!(!failures.record_failure());
+        }
+        assert!(failures.record_failure());
+    }
+
+    #[test]
+    fn successful_frame_resets_the_failure_streak() {
+        let mut failures = ConsecutiveFailures::default();
+
+        for _ in 1..MAX_CONSECUTIVE_CAPTURE_FAILURES {
+            assert!(!failures.record_failure());
+        }
+        failures.record_success();
+
+        assert!(!failures.record_failure());
     }
 }

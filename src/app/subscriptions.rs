@@ -73,6 +73,45 @@ impl iced_subscription::Recipe for CameraSubscription {
     }
 }
 
+/// Fatal camera errors that occur after startup (for example, unplugging the
+/// device) are delivered separately from frames so the UI can stop the session
+/// and explain what happened.
+pub fn camera_failure_subscription(camera_manager: Arc<CameraManager>) -> Subscription<String> {
+    let rx = camera_manager.subscribe_failures();
+    iced_subscription::from_recipe(CameraFailureSubscription { rx })
+}
+
+struct CameraFailureSubscription {
+    rx: broadcast::Receiver<String>,
+}
+
+impl iced_subscription::Recipe for CameraFailureSubscription {
+    type Output = String;
+
+    fn hash(&self, state: &mut Hasher) {
+        use std::hash::Hash;
+        std::any::TypeId::of::<Self>().hash(state);
+    }
+
+    fn stream(
+        self: Box<Self>,
+        _input: stream::BoxStream<iced_subscription::Event>,
+    ) -> stream::BoxStream<Self::Output> {
+        let mut rx = self.rx;
+
+        let s = async_stream::stream! {
+            loop {
+                match rx.recv().await {
+                    Ok(error) => yield error,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        };
+        Box::pin(s)
+    }
+}
+
 /* ============================
 CV Subscription
 ============================ */

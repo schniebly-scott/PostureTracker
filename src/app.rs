@@ -158,6 +158,7 @@ pub struct App {
     posture_threshold_deg: f32,
 
     bad_posture: bool,
+    pipeline_error: Option<String>,
     inference_state: InferenceState,
     run_mode: RunMode,
     /// The mode the next session will start in, chosen via the control-panel
@@ -202,6 +203,7 @@ pub struct App {
 pub enum Message {
     CamFrame(image::Handle),
     CvInference((image::Handle, TimeMetrics, Option<f32>)),
+    CameraFailed(String),
     WindowCloseRequested(window::Id),
     HideMainWindowPressed,
     RestoreMainWindowRequested,
@@ -219,6 +221,7 @@ pub enum Message {
     ForceDismissToggled(bool),
     BackgroundSampleTick,
     DismissAlert,
+    DismissPipelineError,
     CalibratePressed,
     CalibrationTick,
     SessionModeSelected(RunMode),
@@ -267,6 +270,7 @@ impl App {
                 posture_baseline_deg: config.posture.baseline_deg,
                 posture_threshold_deg: config.posture.threshold_deg,
                 bad_posture: false,
+                pipeline_error: None,
                 inference_state: InferenceState::Unloaded,
                 run_mode: RunMode::Foreground,
                 session_start_mode: if config.session.start_in_background {
@@ -365,6 +369,54 @@ impl App {
         }
     }
 
+    fn show_pipeline_error(&mut self, message: String) {
+        eprintln!("{message}");
+        self.pipeline_error = Some(message);
+    }
+
+    /// Put the app back into a truthful stopped state after either worker
+    /// cannot start or the camera dies mid-session.
+    fn stop_failed_pipeline(&mut self, message: String) {
+        self.pipelines.camera_manager.stop();
+        self.pipelines.cv_manager.stop();
+        self.cam_frame = None;
+        self.cv_frame = None;
+        self.posture_angle_deg = None;
+        self.bad_posture = false;
+        self.background_samples = None;
+        self.calibration_state = CalibrationState::Idle;
+        if self.metrics.is_tracking() {
+            self.metrics.stop_tracking();
+        }
+        self.run_mode = RunMode::Foreground;
+        if !matches!(self.inference_state, InferenceState::Unloaded) {
+            self.inference_state = InferenceState::Stopped;
+        }
+        self.show_pipeline_error(message);
+    }
+
+    /// Start both workers as one operation. If either half fails, stop the
+    /// other half and surface a user-actionable error instead of leaving a
+    /// partially running pipeline.
+    fn start_pipeline(&mut self) -> bool {
+        self.pipeline_error = None;
+
+        if let Err(e) = self.pipelines.camera_manager.start() {
+            self.stop_failed_pipeline(format!(
+                "Unable to start the camera: {e}. Check that it is connected and allowed in \
+                 system privacy settings, then select it again in Settings."
+            ));
+            return false;
+        }
+
+        if let Err(e) = self.pipelines.cv_manager.start() {
+            self.stop_failed_pipeline(format!("Unable to start posture detection: {e}."));
+            return false;
+        }
+
+        true
+    }
+
     /// Loads the inference model if it hasn't been loaded yet, recording the
     /// load time. Returns `false` if the model failed to load (the caller
     /// should bail out without starting the pipeline).
@@ -373,9 +425,10 @@ impl App {
             match self.pipelines.cv_manager.load_model() {
                 Ok(elapsed) => {
                     self.model_load_time = Some(elapsed);
+                    self.inference_state = InferenceState::Stopped;
                 }
                 Err(e) => {
-                    eprintln!("Unable to load model: {e}");
+                    self.show_pipeline_error(format!("Unable to load the posture model: {e}."));
                     return false;
                 }
             }
@@ -390,13 +443,13 @@ impl App {
         if !self.ensure_model_loaded() {
             return false;
         }
+        self.pipeline_error = None;
 
         if self.sample_interval_secs().is_some() {
             self.pipelines.camera_manager.stop();
             self.pipelines.cv_manager.stop();
-        } else if !self.pipelines.camera_manager.is_running() {
-            self.pipelines.camera_manager.start().ok();
-            self.pipelines.cv_manager.start().ok();
+        } else if !self.pipelines.camera_manager.is_running() && !self.start_pipeline() {
+            return false;
         }
 
         self.run_mode = RunMode::Background;
@@ -558,6 +611,20 @@ impl App {
                 self.ingest_calibration_sample(posture_angle_deg);
                 self.evaluate_background(posture_angle_deg)
             }
+            Message::CameraFailed(error) => {
+                let was_background = self.is_background_mode();
+                self.stop_failed_pipeline(error);
+                let dismiss_alert = self.dismiss_alert();
+                if was_background {
+                    Task::batch([
+                        dismiss_alert,
+                        window::minimize(self.main_window_id, false),
+                        window::gain_focus(self.main_window_id),
+                    ])
+                } else {
+                    dismiss_alert
+                }
+            }
             Message::WindowCloseRequested(window_id) => {
                 if window_id == self.main_window_id {
                     // When a tray icon is available and a session is active,
@@ -615,11 +682,8 @@ impl App {
                     return Task::none();
                 }
 
-                if let Err(e) = self.pipelines.camera_manager.start() {
-                    eprintln!("Unable to start camera: {e}");
-                }
-                if let Err(e) = self.pipelines.cv_manager.start() {
-                    eprintln!("Unable to start model: {e}");
+                if !self.start_pipeline() {
+                    return Task::none();
                 }
                 self.posture_angle_deg = None;
                 self.bad_posture = false;
@@ -664,8 +728,7 @@ impl App {
                     match (was_continuous, is_continuous) {
                         (false, true) => {
                             if !self.pipelines.camera_manager.is_running() {
-                                self.pipelines.camera_manager.start().ok();
-                                self.pipelines.cv_manager.start().ok();
+                                self.start_pipeline();
                             }
                         }
                         (true, false) => {
@@ -720,13 +783,22 @@ impl App {
                 // the user clicks.
                 let alert_blocks_sampling = self.alert_window_id.is_some() && self.force_dismiss;
                 if !alert_blocks_sampling && !self.pipelines.camera_manager.is_running() {
-                    self.pipelines.camera_manager.start().ok();
-                    self.pipelines.cv_manager.start().ok();
-                    self.background_samples = Some(Vec::new());
+                    if self.start_pipeline() {
+                        self.background_samples = Some(Vec::new());
+                    } else {
+                        return Task::batch([
+                            window::minimize(self.main_window_id, false),
+                            window::gain_focus(self.main_window_id),
+                        ]);
+                    }
                 }
                 Task::none()
             }
             Message::DismissAlert => self.dismiss_alert(),
+            Message::DismissPipelineError => {
+                self.pipeline_error = None;
+                Task::none()
+            }
             Message::SessionModeSelected(mode) => {
                 self.session_start_mode = mode;
                 self.config.session.start_in_background = matches!(mode, RunMode::Background);
@@ -838,7 +910,12 @@ impl App {
                 if self.pipelines.camera_manager.is_running() {
                     self.pipelines.camera_manager.stop();
                     if let Err(e) = self.pipelines.camera_manager.start() {
-                        eprintln!("Failed to restart camera: {e}");
+                        self.stop_failed_pipeline(format!(
+                            "Unable to switch to the selected camera: {e}. Check that it is \
+                             connected and allowed in system privacy settings."
+                        ));
+                    } else {
+                        self.pipeline_error = None;
                     }
                 }
                 Task::none()
@@ -909,6 +986,8 @@ impl App {
                 .map(Message::CamFrame),
             subscriptions::inference_subscription(self.pipelines.cv_manager.clone())
                 .map(Message::CvInference),
+            subscriptions::camera_failure_subscription(self.pipelines.camera_manager.clone())
+                .map(Message::CameraFailed),
             window::close_requests().map(Message::WindowCloseRequested),
         ];
 

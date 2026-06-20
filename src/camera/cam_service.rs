@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
 
 use crate::SharedFrame;
 use crate::config::CameraConfig;
@@ -41,15 +42,18 @@ impl Drop for RgbaBuffer {
 pub struct CameraManager {
     config: Mutex<CameraConfig>,
     core: ServiceCore<Frame>,
+    failure_tx: broadcast::Sender<String>,
     shared: SharedFrame,
 }
 
 impl CameraManager {
     pub fn new(config: CameraConfig, shared: SharedFrame) -> Self {
+        let (failure_tx, _) = broadcast::channel(4);
         Self {
             config: Mutex::new(config),
             shared,
             core: ServiceCore::new(2),
+            failure_tx,
         }
     }
 
@@ -57,6 +61,12 @@ impl CameraManager {
     /// the camera is (re)started.
     pub fn set_device(&self, device: Option<String>) {
         self.config.lock().unwrap().device = device;
+    }
+
+    /// Subscribe to fatal capture failures that happen after the worker has
+    /// started, such as a camera being unplugged mid-session.
+    pub fn subscribe_failures(&self) -> broadcast::Receiver<String> {
+        self.failure_tx.subscribe()
     }
 }
 
@@ -71,6 +81,7 @@ impl ManagedService for CameraManager {
         CameraWorker {
             config: self.config.lock().unwrap().clone(),
             core: self.core.clone(),
+            failure_tx: self.failure_tx.clone(),
             shared: self.shared.clone(),
         }
         .spawn()
@@ -110,5 +121,16 @@ mod tests {
             drop(RgbaBuffer::pooled(data, pool.clone()));
             assert!(pool.lock().unwrap().len() <= 1);
         }
+    }
+
+    #[test]
+    fn camera_failure_notifications_reach_subscribers() {
+        let shared = Arc::new(crate::frame_channel::FrameChannel::new());
+        let manager = CameraManager::new(CameraConfig::default(), shared);
+        let mut rx = manager.subscribe_failures();
+
+        manager.failure_tx.send("camera disconnected".to_string()).unwrap();
+
+        assert_eq!(rx.try_recv().unwrap(), "camera disconnected");
     }
 }

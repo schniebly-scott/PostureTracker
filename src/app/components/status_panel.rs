@@ -10,7 +10,9 @@ use crate::app::{App, Message, SampleIntervalChoice};
 /// State of the live-status badge, mapped to a label + accent color.
 fn status_state(app: &App) -> (&'static str, &'static str, Color) {
     let active = app.is_camera_running() || app.is_background_mode();
-    if app.posture_baseline_deg.is_none() {
+    if app.pipeline_error.is_some() {
+        ("Camera unavailable", "bad", RED)
+    } else if app.posture_baseline_deg.is_none() {
         ("Not calibrated", "neutral", T3)
     } else if app.bad_posture {
         ("Bad posture detected", "bad", RED)
@@ -54,7 +56,9 @@ fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Mess
 }
 
 fn state_line(app: &App) -> String {
-    if app.posture_baseline_deg.is_none() {
+    if let Some(error) = &app.pipeline_error {
+        error.clone()
+    } else if app.posture_baseline_deg.is_none() {
         "Calibrate a baseline to start checking your alignment.".to_string()
     } else if app.bad_posture {
         "You've drifted past your threshold — straighten up to clear the alert.".to_string()
@@ -235,15 +239,32 @@ fn graph_card(app: &App) -> Element<'_, Message> {
 pub fn view(app: &App) -> Element<'_, Message> {
     let (label, kind, color) = status_state(app);
 
-    let left = column![
+    let mut left = column![
         ui::micro_label("Live status"),
         state_badge(label, kind, color),
-        text(state_line(app)).size(14).color(T2),
-        threshold_field(app),
-        interval_field(app),
-        dismiss_toggle(app),
+        text(state_line(app)).size(14).color(T2).width(Fill),
     ]
-    .spacing(16)
+    .spacing(12);
+
+    if app.pipeline_error.is_some() {
+        left = left.push(
+            row![
+                ui::secondary_button(
+                    text("Camera settings").size(13).font(ui::semibold()).into()
+                )
+                .on_press(Message::OpenSettingsPressed),
+                ui::danger_button(text("Dismiss").size(13).font(ui::semibold()).into())
+                    .on_press(Message::DismissPipelineError),
+            ]
+            .spacing(8),
+        );
+    }
+
+    let left = left
+        .push(threshold_field(app))
+        .push(interval_field(app))
+        .push(dismiss_toggle(app))
+        .spacing(16)
     // Reflows with the window but stays narrow enough to keep the controls
     // readable; the graph card to its right takes the remaining width.
     .width(Length::FillPortion(2))
@@ -254,7 +275,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .height(Fill);
 
     container(body)
-        .style(ui::panel_alert_style(app.bad_posture))
+        .style(ui::panel_alert_style(
+            app.bad_posture || app.pipeline_error.is_some(),
+        ))
         .padding(16)
         .width(Fill)
         .height(Length::FillPortion(5))
