@@ -9,8 +9,8 @@ use crate::config::{config_path, Config, PostureConfig};
 use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
-use iced::widget::{column, container, image, row};
-use iced::{Element, Length, Size, Subscription, Task, Theme, keyboard, window};
+use iced::widget::{column, container, image, responsive, row, scrollable};
+use iced::{Alignment, Element, Length, Size, Subscription, Task, Theme, keyboard, window};
 
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
@@ -22,8 +22,28 @@ const MAIN_WINDOW_SIZE: Size = Size::new(1100.0, 860.0);
 /// Floor that keeps every panel reachable on small/scaled displays (e.g. a
 /// 1366×768 panel, or a 1080p screen at 150 % giving 1280×720 logical px).
 const MAIN_WINDOW_MIN_SIZE: Size = Size::new(980.0, 640.0);
+const DASHBOARD_PADDING: f32 = 14.0;
+const DASHBOARD_SPACING: f32 = 14.0;
+/// Fixed width of the controls/metrics column. The camera panel fills the
+/// remaining width, so it (not these panels) grows when the window widens.
+const DASHBOARD_CONTROLS_WIDTH: f32 = 462.0;
+/// Natural panel heights used when the viewport is too short for the
+/// proportional dashboard. The resulting 900 px canvas scrolls instead of
+/// squeezing either row until its controls are clipped.
+const DASHBOARD_TOP_MIN_HEIGHT: f32 = 480.0;
+const DASHBOARD_STATUS_MIN_HEIGHT: f32 = 378.0;
+const DASHBOARD_MIN_CONTENT_HEIGHT: f32 = DASHBOARD_PADDING * 2.0
+    + DASHBOARD_SPACING
+    + DASHBOARD_TOP_MIN_HEIGHT
+    + DASHBOARD_STATUS_MIN_HEIGHT;
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashboardHeightMode {
+    Proportional,
+    Scrollable,
+}
 
 #[derive(PartialEq)]
 enum InferenceState {
@@ -863,28 +883,7 @@ impl App {
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if window_id == self.main_window_id {
             let content: Element<'_, Message> = match self.view {
-                View::Dashboard => {
-                    let body = column![
-                        row![
-                            components::camera_panel::view(self),
-                            column![
-                                components::control_panel::view(self),
-                                components::metrics_panel::view(self),
-                            ]
-                            .spacing(14)
-                            // Proportional against the camera panel's
-                            // FillPortion(3) so the columns reflow with the
-                            // window instead of pinning a 462 px width.
-                            .width(Length::FillPortion(2)),
-                        ]
-                        .spacing(14)
-                        .height(Length::FillPortion(7)),
-                        components::status_panel::view(self),
-                    ]
-                    .spacing(14);
-
-                    container(body).padding(14).height(Length::Fill).into()
-                }
+                View::Dashboard => responsive(|size| self.dashboard_view(size)).into(),
                 View::Settings => components::settings_panel::view(self),
             };
 
@@ -901,6 +900,72 @@ impl App {
         } else {
             iced::widget::text("Unknown window").into()
         }
+    }
+
+    fn dashboard_view(&self, size: Size) -> Element<'_, Message> {
+        match dashboard_height_mode(size.height) {
+            DashboardHeightMode::Proportional => {
+                let body = column![
+                    self.dashboard_top_row(Length::FillPortion(7)),
+                    components::status_panel::view(self),
+                ]
+                .spacing(DASHBOARD_SPACING)
+                // Center the capped status panel so its extra width is balanced
+                // on both sides when the window is wider than the panel's cap.
+                .align_x(Alignment::Center);
+
+                container(body)
+                    .padding(DASHBOARD_PADDING)
+                    .height(Length::Fill)
+                    .into()
+            }
+            DashboardHeightMode::Scrollable => {
+                let body = column![
+                    self.dashboard_top_row(Length::Fixed(DASHBOARD_TOP_MIN_HEIGHT)),
+                    components::status_panel::view_with_height(
+                        self,
+                        Length::Fixed(DASHBOARD_STATUS_MIN_HEIGHT),
+                    ),
+                ]
+                .spacing(DASHBOARD_SPACING)
+                .width(Length::Fill)
+                .align_x(Alignment::Center);
+
+                scrollable(
+                    container(body)
+                        .padding(DASHBOARD_PADDING)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            }
+        }
+    }
+
+    fn dashboard_top_row(&self, height: Length) -> Element<'_, Message> {
+        row![
+            components::camera_panel::view(self),
+            column![
+                components::control_panel::view(self),
+                components::metrics_panel::view(self),
+            ]
+            .spacing(DASHBOARD_SPACING)
+            // Fixed width so the controls and metrics keep a stable size; the
+            // camera panel is the row's only fill child, so it absorbs all the
+            // extra space when the window grows instead of letting these
+            // panels balloon. The window min-size guarantees it always fits.
+            // (A `max_width` on a FillPortion child is a no-op here: iced's
+            // flex layout pins such a child to min == max == its portion, so
+            // the cap gets clamped away.)
+            .width(Length::Fixed(DASHBOARD_CONTROLS_WIDTH)),
+        ]
+        .spacing(DASHBOARD_SPACING)
+        // Always span the full width so centering the column (to center the
+        // capped status panel below) leaves this row full-bleed.
+        .width(Length::Fill)
+        .height(height)
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -1079,6 +1144,14 @@ fn interval_choice_from_secs(secs: u64) -> (SampleIntervalChoice, String) {
     }
 }
 
+fn dashboard_height_mode(height: f32) -> DashboardHeightMode {
+    if height < DASHBOARD_MIN_CONTENT_HEIGHT {
+        DashboardHeightMode::Scrollable
+    } else {
+        DashboardHeightMode::Proportional
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,6 +1162,32 @@ mod tests {
         assert_eq!(MetricsCategory::Session.label(), "This Session");
         assert_eq!(MetricsCategory::AllTime.label(), "All Time");
         assert_eq!(MetricsCategory::QuickView.label(), "Quick View");
+    }
+
+    #[test]
+    fn main_window_is_resizable_and_not_always_on_top() {
+        let settings = App::main_window_settings();
+
+        assert_eq!(settings.size, MAIN_WINDOW_SIZE);
+        assert_eq!(settings.min_size, Some(MAIN_WINDOW_MIN_SIZE));
+        assert!(settings.resizable);
+        assert_eq!(settings.level, window::Level::Normal);
+    }
+
+    #[test]
+    fn short_dashboard_viewports_scroll_instead_of_clipping() {
+        assert_eq!(
+            dashboard_height_mode(MAIN_WINDOW_MIN_SIZE.height),
+            DashboardHeightMode::Scrollable
+        );
+        assert_eq!(
+            dashboard_height_mode(DASHBOARD_MIN_CONTENT_HEIGHT - 1.0),
+            DashboardHeightMode::Scrollable
+        );
+        assert_eq!(
+            dashboard_height_mode(DASHBOARD_MIN_CONTENT_HEIGHT),
+            DashboardHeightMode::Proportional
+        );
     }
 
     #[test]
