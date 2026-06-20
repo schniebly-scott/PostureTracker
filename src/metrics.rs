@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
-const HISTORY_SECS: f64 = 120.0;
+pub const HISTORY_SECS: f64 = 120.0;
 const ALL_TIME_FILE: &str = "all_time.toml";
 
 #[derive(Clone, Debug)]

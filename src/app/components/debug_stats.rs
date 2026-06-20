@@ -7,9 +7,7 @@ use iced::mouse;
 
 use crate::app::theme::{GREEN, PANEL, RED, T1};
 use crate::app::{App, Message};
-use crate::metrics::AngleSample;
-
-const HISTORY_SECS: f64 = 120.0;
+use crate::metrics::{AngleSample, HISTORY_SECS};
 
 pub fn angle_chart(app: &App, height: impl Into<Length>) -> Element<'_, Message> {
     canvas::Canvas::new(AngleChart {
@@ -23,6 +21,7 @@ pub fn angle_chart(app: &App, height: impl Into<Length>) -> Element<'_, Message>
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    let history_label = format!("Angle History ({:.0} min)", HISTORY_SECS / 60.0);
     let current_angle = app
         .posture_angle_deg
         .map(|a| format!("{a:.1} deg"))
@@ -57,7 +56,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         column![
             text("Debug Stats").size(20),
             stats,
-            text("Angle History (2 min)").size(14),
+            text(history_label).size(14),
             chart,
         ]
         .spacing(10),

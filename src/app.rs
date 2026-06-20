@@ -199,9 +199,16 @@ pub struct App {
 }
 
 #[derive(Debug, Clone)]
+pub struct InferenceUpdate {
+    pub handle: image::Handle,
+    pub time_metrics: TimeMetrics,
+    pub posture_angle_deg: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     CamFrame(image::Handle),
-    CvInference((image::Handle, TimeMetrics, Option<f32>)),
+    CvInference(InferenceUpdate),
     WindowCloseRequested(window::Id),
     HideMainWindowPressed,
     RestoreMainWindowRequested,
@@ -550,11 +557,15 @@ impl App {
                 self.cam_frame = Some(frame);
                 Task::none()
             }
-            Message::CvInference((frame, time_metrics, posture_angle_deg)) => {
+            Message::CvInference(InferenceUpdate {
+                handle,
+                time_metrics,
+                posture_angle_deg,
+            }) => {
                 if !self.pipelines.cv_manager.is_running() {
                     return Task::none();
                 }
-                self.apply_inference(frame, time_metrics, posture_angle_deg);
+                self.apply_inference(handle, time_metrics, posture_angle_deg);
                 self.ingest_calibration_sample(posture_angle_deg);
                 self.evaluate_background(posture_angle_deg)
             }

@@ -25,7 +25,7 @@ impl CVWorker {
             // Block until a frame is published or the pipeline is stopped. No
             // polling: an idle pipeline parks here with zero wakeups, and a
             // stop wakes us with `None` so the loop exits.
-            while let Some(frame) = shared.wait(&core.running) {
+            while let Some(frame) = shared.wait(core.running_flag()) {
                 // ---------- Extract dimensions (borrow pixels directly) ----------
                 let (width, height) = (frame.0, frame.1);
 
@@ -45,7 +45,7 @@ impl CVWorker {
                 // pool unboundedly (issue_writeups/cv_buffer_pool_leak.md).
                 let buf = RgbaBuffer::unpooled(output);
 
-                let _ = core.tx.send(Inference {
+                let _ = core.publish(Inference {
                     frame: (width, height, Arc::new(buf)),
                     time_metrics,
                     posture_angle_deg,

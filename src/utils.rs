@@ -22,18 +22,13 @@ pub trait ManagedService {
     /// double-spawn race for every `ManagedService` in one place (see
     /// issue_writeups/cv_worker_model_mutex.md).
     fn start(&self) -> Result<(), Box<dyn Error>> {
-        if self
-            .core()
-            .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
+        if !self.core().claim_running() {
             return Err("service is already running".into());
         }
 
         // Clear the flag if spawning fails so the next start can retry.
         if let Err(e) = self.spawn_worker() {
-            self.core().running.store(false, Ordering::SeqCst);
+            self.core().mark_running(false);
             return Err(e);
         }
 
@@ -41,22 +36,22 @@ pub trait ManagedService {
     }
 
     fn is_running(&self) -> bool {
-        self.core().running.load(Ordering::SeqCst)
+        self.core().is_running()
     }
 
     fn stop(&self) {
-        self.core().running.store(false, Ordering::SeqCst);
+        self.core().mark_running(false);
     }
 
     fn subscribe(&self) -> broadcast::Receiver<Self::Output> {
-        self.core().tx.subscribe()
+        self.core().subscribe()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ServiceCore<T: Clone> {
-    pub running: Arc<AtomicBool>,
-    pub tx: broadcast::Sender<T>,
+    running: Arc<AtomicBool>,
+    tx: broadcast::Sender<T>,
 }
 
 impl<T: Clone> ServiceCore<T> {
@@ -66,6 +61,32 @@ impl<T: Clone> ServiceCore<T> {
             running: Arc::new(AtomicBool::new(false)),
             tx,
         }
+    }
+
+    pub fn claim_running(&self) -> bool {
+        self.running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    pub fn mark_running(&self, running: bool) {
+        self.running.store(running, Ordering::SeqCst);
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    pub fn running_flag(&self) -> &AtomicBool {
+        &self.running
+    }
+
+    pub fn publish(&self, value: T) -> Result<usize, broadcast::error::SendError<T>> {
+        self.tx.send(value)
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<T> {
+        self.tx.subscribe()
     }
 }
 
@@ -94,14 +115,14 @@ mod tests {
     #[test]
     fn service_core_starts_not_running() {
         let core = ServiceCore::<u32>::new(4);
-        assert!(!core.running.load(Ordering::SeqCst));
+        assert!(!core.is_running());
     }
 
     #[test]
     fn broadcast_delivers_to_subscriber() {
         let core = ServiceCore::<u32>::new(4);
-        let mut rx = core.tx.subscribe();
-        core.tx.send(42).unwrap();
+        let mut rx = core.subscribe();
+        core.publish(42).unwrap();
         assert_eq!(rx.try_recv().unwrap(), 42);
     }
 
@@ -140,7 +161,7 @@ mod tests {
             core: ServiceCore::new(4),
         };
         let mut rx = svc.subscribe();
-        svc.core().tx.send(7).unwrap();
+        svc.core().publish(7).unwrap();
         assert_eq!(rx.try_recv().unwrap(), 7);
     }
 }
