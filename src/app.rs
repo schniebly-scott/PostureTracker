@@ -10,7 +10,7 @@ use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
 use iced::widget::{column, container, image, row};
-use iced::{Element, Length, Size, Subscription, Task, Theme, window};
+use iced::{Element, Length, Size, Subscription, Task, Theme, keyboard, window};
 
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
@@ -513,10 +513,12 @@ impl App {
                     .unwrap_or(true);
 
             if can_alert {
-                // The cooldown is started on dismiss, not here.
+                // The cooldown is started on dismiss, not here. Full-screen is
+                // requested in `alert_window_settings`, so there's no separate
+                // maximize step to fight with as a second source of truth.
                 let (id, open) = window::open(Self::alert_window_settings());
                 self.alert_window_id = Some(id);
-                return Task::batch([open.discard(), window::maximize(id, true)]);
+                return open.discard();
             }
         } else if self.alert_window_id.is_some() && !self.force_dismiss {
             return self.dismiss_alert();
@@ -940,6 +942,23 @@ impl App {
             );
         }
 
+        // While the alert covers the screen, Escape/Enter dismiss it too — the
+        // window is undecorated so there's no close button, and a keyboard exit
+        // is the expected reflex. This routes through `Message::DismissAlert`
+        // like the click path, so the re-alert cooldown still starts on exit.
+        if self.alert_window_id.is_some() {
+            subscriptions.push(keyboard::listen().filter_map(|event| match event {
+                keyboard::Event::KeyPressed {
+                    key:
+                        keyboard::Key::Named(
+                            keyboard::key::Named::Escape | keyboard::key::Named::Enter,
+                        ),
+                    ..
+                } => Some(Message::DismissAlert),
+                _ => None,
+            }));
+        }
+
         Subscription::batch(subscriptions)
     }
 
@@ -985,7 +1004,15 @@ impl App {
 
     fn alert_window_settings() -> window::Settings {
         window::Settings {
+            // `fullscreen` is requested at creation so the window manager makes
+            // the surface cover the monitor before it's ever mapped — this is
+            // far more portable than mapping a small window and then asking the
+            // WM to maximize an undecorated, always-on-top surface (which tiling
+            // WMs and macOS handle inconsistently). `size` is the guaranteed
+            // baseline the overlay is designed to look correct at, used as the
+            // fallback if a WM declines the fullscreen request.
             size: ALERT_WINDOW_SIZE,
+            fullscreen: true,
             resizable: false,
             decorations: false,
             level: window::Level::AlwaysOnTop,
