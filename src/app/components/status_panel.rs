@@ -233,6 +233,10 @@ fn graph_card(app: &App) -> Element<'_, Message> {
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    view_with_height(app, Length::FillPortion(5))
+}
+
+pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
     let (label, kind, color) = status_state(app);
 
     let left = column![
@@ -257,6 +261,6 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .style(ui::panel_alert_style(app.bad_posture))
         .padding(16)
         .width(Fill)
-        .height(Length::FillPortion(5))
+        .height(height)
         .into()
 }
