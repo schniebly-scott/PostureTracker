@@ -10,7 +10,7 @@ use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
 use iced::widget::{column, container, image, responsive, row, scrollable};
-use iced::{Element, Length, Size, Subscription, Task, Theme, keyboard, window};
+use iced::{Alignment, Element, Length, Size, Subscription, Task, Theme, keyboard, window};
 
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
 const CALIBRATION_SAMPLE_SECS: u64 = 5;
@@ -24,6 +24,9 @@ const MAIN_WINDOW_SIZE: Size = Size::new(1100.0, 860.0);
 const MAIN_WINDOW_MIN_SIZE: Size = Size::new(980.0, 640.0);
 const DASHBOARD_PADDING: f32 = 14.0;
 const DASHBOARD_SPACING: f32 = 14.0;
+/// Fixed width of the controls/metrics column. The camera panel fills the
+/// remaining width, so it (not these panels) grows when the window widens.
+const DASHBOARD_CONTROLS_WIDTH: f32 = 462.0;
 /// Natural panel heights used when the viewport is too short for the
 /// proportional dashboard. The resulting 900 px canvas scrolls instead of
 /// squeezing either row until its controls are clipped.
@@ -906,7 +909,10 @@ impl App {
                     self.dashboard_top_row(Length::FillPortion(7)),
                     components::status_panel::view(self),
                 ]
-                .spacing(DASHBOARD_SPACING);
+                .spacing(DASHBOARD_SPACING)
+                // Center the capped status panel so its extra width is balanced
+                // on both sides when the window is wider than the panel's cap.
+                .align_x(Alignment::Center);
 
                 container(body)
                     .padding(DASHBOARD_PADDING)
@@ -922,7 +928,8 @@ impl App {
                     ),
                 ]
                 .spacing(DASHBOARD_SPACING)
-                .width(Length::Fill);
+                .width(Length::Fill)
+                .align_x(Alignment::Center);
 
                 scrollable(
                     container(body)
@@ -944,11 +951,19 @@ impl App {
                 components::metrics_panel::view(self),
             ]
             .spacing(DASHBOARD_SPACING)
-            // Proportional against the camera panel's FillPortion(3) so the
-            // columns reflow instead of pinning the old 462 px width.
-            .width(Length::FillPortion(2)),
+            // Fixed width so the controls and metrics keep a stable size; the
+            // camera panel is the row's only fill child, so it absorbs all the
+            // extra space when the window grows instead of letting these
+            // panels balloon. The window min-size guarantees it always fits.
+            // (A `max_width` on a FillPortion child is a no-op here: iced's
+            // flex layout pins such a child to min == max == its portion, so
+            // the cap gets clamped away.)
+            .width(Length::Fixed(DASHBOARD_CONTROLS_WIDTH)),
         ]
         .spacing(DASHBOARD_SPACING)
+        // Always span the full width so centering the column (to center the
+        // capped status panel below) leaves this row full-bleed.
+        .width(Length::Fill)
         .height(height)
         .into()
     }
