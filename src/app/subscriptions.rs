@@ -1,4 +1,4 @@
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use iced::Subscription;
 use iced::advanced::subscription as iced_subscription;
@@ -8,11 +8,12 @@ use iced::widget::image;
 
 use tokio::sync::broadcast;
 
-use crate::Frame;
+use crate::app::InferenceUpdate;
 use crate::camera::RgbaBuffer;
-use crate::cv::{Inference, TimeMetrics};
+use crate::cv::Inference;
 use crate::utils::ManagedService;
 use crate::{camera::CameraManager, cv::CVManager};
+use crate::Frame;
 
 /// Wraps a pooled `RgbaBuffer` so its pixels can back a zero-copy
 /// `bytes::Bytes` (and thus an `image::Handle`) without cloning. The pooled
@@ -36,17 +37,19 @@ Camera Subscription
 ============================ */
 
 pub fn raw_frame_subscription(camera_manager: Arc<CameraManager>) -> Subscription<image::Handle> {
+    let service_id = Arc::as_ptr(&camera_manager) as usize;
     let rx = camera_manager.subscribe();
-    iced_subscription::from_recipe(CameraSubscription::new(rx))
+    iced_subscription::from_recipe(CameraSubscription::new(rx, service_id))
 }
 
 struct CameraSubscription {
     rx: broadcast::Receiver<Frame>,
+    service_id: usize,
 }
 
 impl CameraSubscription {
-    pub fn new(rx: broadcast::Receiver<Frame>) -> Self {
-        Self { rx }
+    pub fn new(rx: broadcast::Receiver<Frame>, service_id: usize) -> Self {
+        Self { rx, service_id }
     }
 }
 
@@ -56,6 +59,8 @@ impl iced_subscription::Recipe for CameraSubscription {
     fn hash(&self, state: &mut Hasher) {
         use std::hash::Hash;
         std::any::TypeId::of::<Self>().hash(state);
+        // Keep subscriptions from distinct manager instances from deduplicating.
+        self.service_id.hash(state);
     }
 
     fn stream(
@@ -79,28 +84,31 @@ CV Subscription
 
 pub fn inference_subscription(
     cv_manager: Arc<CVManager>,
-) -> Subscription<(image::Handle, TimeMetrics, Option<f32>)> {
+) -> Subscription<InferenceUpdate> {
+    let service_id = Arc::as_ptr(&cv_manager) as usize;
     let rx = cv_manager.subscribe();
-    iced_subscription::from_recipe(CVSubscription::new(rx))
+    iced_subscription::from_recipe(CVSubscription::new(rx, service_id))
 }
 
 struct CVSubscription {
     rx: broadcast::Receiver<Inference>,
+    service_id: usize,
 }
 
 impl CVSubscription {
-    pub fn new(rx: broadcast::Receiver<Inference>) -> Self {
-        Self { rx }
+    pub fn new(rx: broadcast::Receiver<Inference>, service_id: usize) -> Self {
+        Self { rx, service_id }
     }
 }
 
 impl iced_subscription::Recipe for CVSubscription {
-    type Output = (image::Handle, TimeMetrics, Option<f32>);
-    //TODO: make the output inferred from Inference type but still transform frame to handle
+    type Output = InferenceUpdate;
 
     fn hash(&self, state: &mut Hasher) {
         use std::hash::Hash;
         std::any::TypeId::of::<Self>().hash(state);
+        // Keep subscriptions from distinct manager instances from deduplicating.
+        self.service_id.hash(state);
     }
 
     fn stream(
@@ -111,11 +119,11 @@ impl iced_subscription::Recipe for CVSubscription {
 
         let s = async_stream::stream! {
             while let Ok(inference) = rx.recv().await {
-                yield (
-                    frame_handle(inference.frame),
-                    inference.time_metrics,
-                    inference.posture_angle_deg,
-                );
+                yield InferenceUpdate {
+                    handle: frame_handle(inference.frame),
+                    time_metrics: inference.time_metrics,
+                    posture_angle_deg: inference.posture_angle_deg,
+                };
             }
         };
         Box::pin(s)

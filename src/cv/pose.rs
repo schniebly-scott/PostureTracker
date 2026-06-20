@@ -44,11 +44,11 @@ fn letterbox(orig_w: u32, orig_h: u32, inf_w: u32, inf_h: u32) -> (u32, u32, f32
 }
 
 impl PoseTask {
-    pub fn new() -> Self {
+    pub fn new(inf_width: usize, inf_height: usize, confidence_threshold: f32) -> Self {
         Self {
-            inf_width: INF_WIDTH,
-            inf_height: INF_HEIGHT,
-            confidence_threshold: CONFIDENCE_THRESHOLD,
+            inf_width,
+            inf_height,
+            confidence_threshold,
             draw_buf: Vec::new(),
         }
     }
@@ -261,6 +261,12 @@ impl PoseTask {
     }
 }
 
+impl Default for PoseTask {
+    fn default() -> Self {
+        Self::new(INF_WIDTH, INF_HEIGHT, CONFIDENCE_THRESHOLD)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,7 +289,7 @@ mod tests {
     #[test]
     fn angle_is_90_degrees_for_symmetric_shoulders() {
         // Nose at origin, shoulders at (-1,1) and (1,1): vectors are perpendicular.
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
             Some((-1.0, 1.0, 1.0)),
@@ -295,7 +301,7 @@ mod tests {
 
     #[test]
     fn angle_is_0_degrees_for_parallel_vectors() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
             Some((1.0, 1.0, 1.0)),
@@ -307,7 +313,7 @@ mod tests {
 
     #[test]
     fn angle_is_180_degrees_for_opposite_vectors() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
             Some((-1.0, 0.0, 1.0)),
@@ -319,14 +325,14 @@ mod tests {
 
     #[test]
     fn angle_is_none_when_keypoint_missing() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         let kp = keypoints(Some((0.0, 0.0, 1.0)), None, Some((1.0, 1.0, 1.0)));
         assert!(task.posture_angle_deg(&kp).is_none());
     }
 
     #[test]
     fn angle_is_none_when_confidence_below_threshold() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // Left shoulder confidence below CONFIDENCE_THRESHOLD (0.05).
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
@@ -337,8 +343,19 @@ mod tests {
     }
 
     #[test]
+    fn configured_confidence_threshold_is_used() {
+        let task = PoseTask::new(INF_WIDTH, INF_HEIGHT, 0.9);
+        let kp = keypoints(
+            Some((0.0, 0.0, 0.8)),
+            Some((-1.0, 1.0, 0.8)),
+            Some((1.0, 1.0, 0.8)),
+        );
+        assert!(task.posture_angle_deg(&kp).is_none());
+    }
+
+    #[test]
     fn angle_is_none_for_zero_magnitude_vector() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // Left shoulder coincident with nose => zero-length vector.
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
@@ -352,7 +369,7 @@ mod tests {
     fn angle_never_nan_for_near_collinear_inputs() {
         // Floating point can push cos(theta) slightly past 1.0; the clamp must
         // prevent acos from returning NaN.
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         let kp = keypoints(
             Some((0.0, 0.0, 1.0)),
             Some((1.000001, 1.0, 1.0)),
@@ -364,7 +381,7 @@ mod tests {
 
     #[test]
     fn preprocess_rgba_produces_normalized_nchw_tensor() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // 2x2 solid red image (R=255, G=0, B=0, A=255).
         let rgba: Vec<u8> = [255u8, 0, 0, 255].repeat(4);
         let out = task.preprocess_rgba(&rgba, 2, 2);
@@ -384,7 +401,7 @@ mod tests {
 
     #[test]
     fn decode_yolo_pose_extracts_and_undoes_letterbox() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // Output tensor shape [1, 56, 8400]: 4 bbox + 1 conf + 17*3 keypoints.
         let mut preds = Array3::<f32>::zeros((1, 56, 8400));
 
@@ -424,7 +441,7 @@ mod tests {
 
     #[test]
     fn decode_yolo_pose_errors_when_no_detections() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // All confidences are 0 => no detection above best_conf=0.0.
         let preds = Array3::<f32>::zeros((1, 56, 8400));
         assert!(task.decode_yolo_pose(preds.view(), 640, 640).is_err());
@@ -432,7 +449,7 @@ mod tests {
 
     #[test]
     fn render_returns_rgba_buffer_of_expected_size() {
-        let mut task = PoseTask::new();
+        let mut task = PoseTask::default();
         let kp = keypoints(
             Some((2.0, 2.0, 1.0)),
             Some((1.0, 5.0, 1.0)),
@@ -446,7 +463,7 @@ mod tests {
     fn render_reuses_target_across_different_frame_sizes() {
         // Reusing the backing buffer must still produce correctly sized output
         // when the frame size changes (buffer resizes) and when it stays the same.
-        let mut task = PoseTask::new();
+        let mut task = PoseTask::default();
         let kp = keypoints(Some((2.0, 2.0, 1.0)), None, None);
 
         assert_eq!(task.render(&kp, 10, 10).len(), 10 * 10 * 4);
@@ -471,7 +488,7 @@ mod tests {
 
     #[test]
     fn preprocess_rgba_letterboxes_non_square_input() {
-        let task = PoseTask::new();
+        let task = PoseTask::default();
         // Solid red 1280x640 frame; letterboxed into 640x640 the content occupies
         // rows 160..480, leaving gray (114/255) padding above and below.
         let rgba: Vec<u8> = [255u8, 0, 0, 255].repeat(1280 * 640);

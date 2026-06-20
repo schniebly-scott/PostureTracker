@@ -6,33 +6,75 @@ use crate::app::components::debug_stats;
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
+use crate::metrics::HISTORY_SECS;
 
-/// Cap on the status panel's width so it stops stretching on wide displays.
-/// Matches the dashboard's default content width (1100 px window minus its
-/// 14 px padding on each side) so the panel looks full at the default size and
-/// only caps once the window is enlarged beyond it.
 const STATUS_PANEL_MAX_WIDTH: f32 = 1072.0;
 
-/// State of the live-status badge, mapped to a label + accent color.
-fn status_state(app: &App) -> (&'static str, &'static str, Color) {
-    let active = app.is_camera_running() || app.is_background_mode();
-    if app.posture_baseline_deg.is_none() {
-        ("Not calibrated", "neutral", T3)
-    } else if app.bad_posture {
-        ("Bad posture detected", "bad", RED)
-    } else if app.posture_angle_deg.is_some() {
-        ("Posture within range", "ok", GREEN)
-    } else if active {
-        ("Waiting for pose data", "neutral", T3)
-    } else {
-        ("Idle", "neutral", T3)
+#[derive(Clone, Copy)]
+enum BadgeKind {
+    Neutral,
+    Ok,
+    Bad,
+}
+
+impl BadgeKind {
+    fn color(self) -> Color {
+        match self {
+            Self::Neutral => T3,
+            Self::Ok => GREEN,
+            Self::Bad => RED,
+        }
     }
 }
 
-fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Message> {
+/// State of the live-status badge and its matching explanatory sentence.
+fn live_status(app: &App) -> (BadgeKind, &'static str, String) {
+    let active = app.is_camera_running() || app.is_background_mode();
+    if app.posture_baseline_deg.is_none() {
+        (
+            BadgeKind::Neutral,
+            "Not calibrated",
+            "Calibrate a baseline to start checking your alignment.".to_string(),
+        )
+    } else if app.bad_posture {
+        (
+            BadgeKind::Bad,
+            "Bad posture detected",
+            "You've drifted past your threshold — straighten up to clear the alert.".to_string(),
+        )
+    } else if let (Some(b), Some(a)) = (app.posture_baseline_deg, app.posture_angle_deg) {
+        (
+            BadgeKind::Ok,
+            "Posture within range",
+            format!(
+                "Looking good — your head-to-shoulder angle is {:.1}\u{00B0} from your calibrated baseline.",
+                (a - b).abs()
+            ),
+        )
+    } else if active {
+        (
+            BadgeKind::Neutral,
+            "Waiting for pose data",
+            "Waiting for pose data — make sure your head and shoulders are visible.".to_string(),
+        )
+    } else {
+        (
+            BadgeKind::Neutral,
+            "Idle",
+            "Tracking is idle. Your alignment will appear here once a session begins.".to_string(),
+        )
+    }
+}
+
+fn state_badge<'a>(label: &'a str, kind: BadgeKind) -> Element<'a, Message> {
+    let color = kind.color();
     let (bg, border, text_color) = match kind {
-        "neutral" => (ELEV, LINE, T2),
-        _ => (ui::mix(PANEL, color, 0.15), ui::with_alpha(color, 0.38), color),
+        BadgeKind::Neutral => (ELEV, LINE, T2),
+        BadgeKind::Ok | BadgeKind::Bad => (
+            ui::mix(PANEL, color, 0.15),
+            ui::with_alpha(color, 0.38),
+            color,
+        ),
     };
 
     let dot = container(Space::new().width(9).height(9)).style(move |_| container::Style {
@@ -57,23 +99,6 @@ fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Mess
         ..Default::default()
     })
     .into()
-}
-
-fn state_line(app: &App) -> String {
-    if app.posture_baseline_deg.is_none() {
-        "Calibrate a baseline to start checking your alignment.".to_string()
-    } else if app.bad_posture {
-        "You've drifted past your threshold — straighten up to clear the alert.".to_string()
-    } else if let (Some(b), Some(a)) = (app.posture_baseline_deg, app.posture_angle_deg) {
-        format!(
-            "Looking good — your head-to-shoulder angle is {:.1}\u{00B0} from your calibrated baseline.",
-            (a - b).abs()
-        )
-    } else if app.is_camera_running() || app.is_background_mode() {
-        "Waiting for pose data — make sure your head and shoulders are visible.".to_string()
-    } else {
-        "Tracking is idle. Your alignment will appear here once a session begins.".to_string()
-    }
 }
 
 /// Custom-track slider: green fill (red when bad), white knob, value read-out.
@@ -191,6 +216,10 @@ fn dismiss_toggle(app: &App) -> Element<'_, Message> {
 }
 
 fn graph_card(app: &App) -> Element<'_, Message> {
+    let history_label = format!(
+        "HEAD-TO-SHOULDER ANGLE \u{00B7} LAST {:.0} MIN",
+        HISTORY_SECS / 60.0
+    );
     let legend = |color: Color, label: &'static str| {
         row![
             container(Space::new().width(14).height(3)).style(move |_| container::Style {
@@ -205,7 +234,7 @@ fn graph_card(app: &App) -> Element<'_, Message> {
     };
 
     let head = row![
-        text("HEAD-TO-SHOULDER ANGLE \u{00B7} LAST 2 MIN")
+        text(history_label)
             .size(14)
             .font(ui::semibold())
             .color(T3),
@@ -243,12 +272,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
-    let (label, kind, color) = status_state(app);
+    let (kind, label, status_line) = live_status(app);
 
     let left = column![
         ui::micro_label("Live status"),
-        state_badge(label, kind, color),
-        text(state_line(app)).size(14).color(T2),
+        state_badge(label, kind),
+        text(status_line).size(14).color(T2),
         threshold_field(app),
         interval_field(app),
         dismiss_toggle(app),

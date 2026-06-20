@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{error::Error, time::Instant};
@@ -76,7 +75,7 @@ impl ManagedService for CVManager {
     /// isn't enough on its own — wake the channel too, otherwise a worker
     /// waiting on an idle (stopped) camera would never observe the stop.
     fn stop(&self) {
-        self.core.running.store(false, Ordering::SeqCst);
+        self.core.mark_running(false);
         self.shared.wake();
     }
 }

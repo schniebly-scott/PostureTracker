@@ -1,7 +1,6 @@
 use ccap::{PropertyName, Provider};
 
 use std::error::Error;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -59,7 +58,7 @@ impl CameraWorker {
         thread::spawn(move || {
             let frame_len = (width * height * 4) as usize;
 
-            while self.core.running.load(Ordering::SeqCst) {
+            while self.core.is_running() {
                 match camera.grab_frame(3000) {
                     Ok(Some(frame)) => {
                         let data = frame.data().unwrap();
@@ -77,7 +76,7 @@ impl CameraWorker {
                         // it hasn't taken yet) and fan it out to the UI.
                         self.shared.publish(captured_frame.clone());
 
-                        let _ = self.core.tx.send(captured_frame);
+                        let _ = self.core.publish(captured_frame);
                     }
                     Ok(None) => {
                         eprintln!("Unable to capture frame");
