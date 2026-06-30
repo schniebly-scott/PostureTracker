@@ -173,7 +173,24 @@ jobs:
 
       - name: Point ort at the from-source ONNX Runtime (Intel Mac)
         if: matrix.target == 'x86_64-apple-darwin'
-        run: echo "ORT_LIB_LOCATION=$RUNNER_TEMP/onnxruntime/build/Release" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          ort_root="$RUNNER_TEMP/onnxruntime/build/Release"
+          echo "ORT_LIB_LOCATION=$ort_root" >> "$GITHUB_ENV"
+          # ort-sys statically links the bundled deps (re2, abseil, protobuf, onnx, ...) and
+          # guesses their _deps/<name>-build paths, but ONNX Runtime doesn't place every lib
+          # exactly there (e.g. re2). Add every directory that contains a .a as a link-search
+          # path so all of ort-sys's `-l static=...` references resolve regardless of layout.
+          if ! find "$ort_root" -name 'libre2.a' | grep -q .; then
+            echo "::error::libre2.a not found under $ort_root; ONNX Runtime build may be incomplete"
+            find "$ort_root" -maxdepth 4 -name '*.a' | sort
+            exit 1
+          fi
+          extra=""
+          while IFS= read -r dir; do
+            extra="$extra -L native=$dir"
+          done < <(find "$ort_root" -name '*.a' -exec dirname {} \; | sort -u)
+          echo "RUSTFLAGS=${RUSTFLAGS:-}$extra" >> "$GITHUB_ENV"
 
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
