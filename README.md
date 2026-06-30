@@ -11,6 +11,23 @@ A local desktop application for tracking your posture while working on a compute
 ### AI Usage Disclaimer
 Claude Code was used in the development of this application. Architecture decisions and code reviews are strictly non-AI.
 
+## Installation
+
+### First launch on Windows (SmartScreen)
+The Windows release is currently distributed as an unsigned `.exe`, so on first launch
+Microsoft Defender SmartScreen may show a blue **"Windows protected your PC"** dialog
+warning about an unrecognized app from an unknown publisher. This is expected for any
+new, unsigned indie binary — it has not yet accumulated SmartScreen reputation — and does
+**not** mean the download is unsafe.
+
+To run it anyway:
+1. On the SmartScreen dialog, click **More info**, then **Run anyway**.
+2. Alternatively, before launching: right-click the downloaded `.exe` → **Properties**,
+   tick **Unblock** at the bottom of the **General** tab, then **OK**. This removes the
+   Mark-of-the-Web so SmartScreen won't prompt.
+
+We plan to ship a code-signed build in the future, which will remove this prompt.
+
 ## Process
 **UI Rough Draft in LibreOffice**
 
