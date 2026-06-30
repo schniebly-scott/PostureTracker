@@ -11,7 +11,7 @@ use crate::cv::{TimeMetrics, pose::PoseTask};
 #[derive(Debug)]
 pub struct Model {
     session: Session,
-    task: Box<PoseTask>,
+    task: PoseTask,
     input_name: String,
     output_name: String,
 }
@@ -22,7 +22,7 @@ impl Model {
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_memory(crate::constants::MODEL_BYTES)?;
 
-        let task: Box<PoseTask> = Box::new(PoseTask::new());
+        let task = PoseTask::default();
 
         let input_name = session.inputs()[0].name().to_string();
         let output_name = session.outputs()[0].name().to_string();

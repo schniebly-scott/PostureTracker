@@ -6,27 +6,75 @@ use crate::app::components::debug_stats;
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
+use crate::metrics::HISTORY_SECS;
 
-/// State of the live-status badge, mapped to a label + accent color.
-fn status_state(app: &App) -> (&'static str, &'static str, Color) {
-    let active = app.is_camera_running() || app.is_background_mode();
-    if app.posture_baseline_deg.is_none() {
-        ("Not calibrated", "neutral", T3)
-    } else if app.bad_posture {
-        ("Bad posture detected", "bad", RED)
-    } else if app.posture_angle_deg.is_some() {
-        ("Posture within range", "ok", GREEN)
-    } else if active {
-        ("Waiting for pose data", "neutral", T3)
-    } else {
-        ("Idle", "neutral", T3)
+const STATUS_PANEL_MAX_WIDTH: f32 = 1072.0;
+
+#[derive(Clone, Copy)]
+enum BadgeKind {
+    Neutral,
+    Ok,
+    Bad,
+}
+
+impl BadgeKind {
+    fn color(self) -> Color {
+        match self {
+            Self::Neutral => T3,
+            Self::Ok => GREEN,
+            Self::Bad => RED,
+        }
     }
 }
 
-fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Message> {
+/// State of the live-status badge and its matching explanatory sentence.
+fn live_status(app: &App) -> (BadgeKind, &'static str, String) {
+    let active = app.is_camera_running() || app.is_background_mode();
+    if app.posture_baseline_deg.is_none() {
+        (
+            BadgeKind::Neutral,
+            "Not calibrated",
+            "Calibrate a baseline to start checking your alignment.".to_string(),
+        )
+    } else if app.bad_posture {
+        (
+            BadgeKind::Bad,
+            "Bad posture detected",
+            "You've drifted past your threshold — straighten up to clear the alert.".to_string(),
+        )
+    } else if let (Some(b), Some(a)) = (app.posture_baseline_deg, app.posture_angle_deg) {
+        (
+            BadgeKind::Ok,
+            "Posture within range",
+            format!(
+                "Looking good — your head-to-shoulder angle is {:.1}\u{00B0} from your calibrated baseline.",
+                (a - b).abs()
+            ),
+        )
+    } else if active {
+        (
+            BadgeKind::Neutral,
+            "Waiting for pose data",
+            "Waiting for pose data — make sure your head and shoulders are visible.".to_string(),
+        )
+    } else {
+        (
+            BadgeKind::Neutral,
+            "Idle",
+            "Tracking is idle. Your alignment will appear here once a session begins.".to_string(),
+        )
+    }
+}
+
+fn state_badge<'a>(label: &'a str, kind: BadgeKind) -> Element<'a, Message> {
+    let color = kind.color();
     let (bg, border, text_color) = match kind {
-        "neutral" => (ELEV, LINE, T2),
-        _ => (ui::mix(PANEL, color, 0.15), ui::with_alpha(color, 0.38), color),
+        BadgeKind::Neutral => (ELEV, LINE, T2),
+        BadgeKind::Ok | BadgeKind::Bad => (
+            ui::mix(PANEL, color, 0.15),
+            ui::with_alpha(color, 0.38),
+            color,
+        ),
     };
 
     let dot = container(Space::new().width(9).height(9)).style(move |_| container::Style {
@@ -51,23 +99,6 @@ fn state_badge<'a>(label: &'a str, kind: &str, color: Color) -> Element<'a, Mess
         ..Default::default()
     })
     .into()
-}
-
-fn state_line(app: &App) -> String {
-    if app.posture_baseline_deg.is_none() {
-        "Calibrate a baseline to start checking your alignment.".to_string()
-    } else if app.bad_posture {
-        "You've drifted past your threshold — straighten up to clear the alert.".to_string()
-    } else if let (Some(b), Some(a)) = (app.posture_baseline_deg, app.posture_angle_deg) {
-        format!(
-            "Looking good — your head-to-shoulder angle is {:.1}\u{00B0} from your calibrated baseline.",
-            (a - b).abs()
-        )
-    } else if app.is_camera_running() || app.is_background_mode() {
-        "Waiting for pose data — make sure your head and shoulders are visible.".to_string()
-    } else {
-        "Tracking is idle. Your alignment will appear here once a session begins.".to_string()
-    }
 }
 
 /// Custom-track slider: green fill (red when bad), white knob, value read-out.
@@ -185,6 +216,10 @@ fn dismiss_toggle(app: &App) -> Element<'_, Message> {
 }
 
 fn graph_card(app: &App) -> Element<'_, Message> {
+    let history_label = format!(
+        "HEAD-TO-SHOULDER ANGLE \u{00B7} LAST {:.0} MIN",
+        HISTORY_SECS / 60.0
+    );
     let legend = |color: Color, label: &'static str| {
         row![
             container(Space::new().width(14).height(3)).style(move |_| container::Style {
@@ -199,7 +234,7 @@ fn graph_card(app: &App) -> Element<'_, Message> {
     };
 
     let head = row![
-        text("HEAD-TO-SHOULDER ANGLE \u{00B7} LAST 2 MIN")
+        text(history_label)
             .size(14)
             .font(ui::semibold())
             .color(T3),
@@ -233,21 +268,27 @@ fn graph_card(app: &App) -> Element<'_, Message> {
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let (label, kind, color) = status_state(app);
+    view_with_height(app, Length::FillPortion(5))
+}
+
+pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
+    let (kind, label, status_line) = live_status(app);
 
     let left = column![
         ui::micro_label("Live status"),
-        state_badge(label, kind, color),
-        text(state_line(app)).size(14).color(T2),
+        state_badge(label, kind),
+        text(status_line).size(14).color(T2),
         threshold_field(app),
         interval_field(app),
         dismiss_toggle(app),
     ]
     .spacing(16)
-    // Reflows with the window but stays narrow enough to keep the controls
-    // readable; the graph card to its right takes the remaining width.
-    .width(Length::FillPortion(2))
-    .max_width(366.0);
+    // Fixed width so the status controls keep a stable, readable size; the
+    // graph card to its right is the row's only fill child, so it absorbs the
+    // extra width. (A `max_width` on a FillPortion child is a no-op here:
+    // iced's flex layout pins a fill main-axis child to min == max == its
+    // portion, so the cap is clamped away.)
+    .width(Length::Fixed(366.0));
 
     let body = row![left, graph_card(app)]
         .spacing(22)
@@ -256,7 +297,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
     container(body)
         .style(ui::panel_alert_style(app.bad_posture))
         .padding(16)
+        // Width is the cross axis of the dashboard's vertical column here, so
+        // (unlike a row's main axis) `max_width` is honored: the panel fills
+        // the width up to this cap, then stops stretching on wide displays.
         .width(Fill)
-        .height(Length::FillPortion(5))
+        .max_width(STATUS_PANEL_MAX_WIDTH)
+        .height(height)
         .into()
 }

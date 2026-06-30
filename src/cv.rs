@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use crate::camera::Frame;
 pub use cv_service::CVManager;
-use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct Inference {
@@ -22,11 +21,4 @@ pub struct TimeMetrics {
     pub inference: Duration,
     pub postprocess: Duration,
     pub render: Duration,
-}
-
-#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
-pub enum InfType {
-    Pose,
-    BoundingBox,
-    Segment,
 }

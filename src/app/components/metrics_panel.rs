@@ -26,6 +26,16 @@ fn fmt_duration(d: Option<Duration>) -> String {
     }
 }
 
+/// Untracked cards show a neutral "--" rather than a misleading `0`/`0s`, so the
+/// whole dashboard uses one empty-state convention (matching `fmt_duration(None)`).
+fn dash_if_untracked(tracked: Duration, value: String) -> String {
+    if tracked.is_zero() {
+        "--".to_string()
+    } else {
+        value
+    }
+}
+
 fn fmt_duration_long(d: Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
@@ -141,19 +151,25 @@ fn view_category(app: &App, category: MetricsCategory) -> Element<'_, Message> {
 
 fn view_daily(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
+    let tracked = m.tracked_duration_today();
     let primary = primary_card(
         ui::glyph::CLOCK,
         "TOTAL TIME TODAY",
-        fmt_duration_long(m.tracked_duration_today()),
-        GREEN,
+        dash_if_untracked(tracked, fmt_duration_long(tracked)),
+        if tracked.is_zero() { T1 } else { GREEN },
     );
 
     let row_a = row![
-        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_today().to_string(), false),
+        secondary_card(
+            ui::glyph::TRIANGLE,
+            "Breaks",
+            dash_if_untracked(tracked, m.breaks_today().to_string()),
+            false,
+        ),
         secondary_card(
             ui::glyph::CROSS,
             "Bad time",
-            fmt_duration_long(m.bad_posture_duration_today()),
+            dash_if_untracked(tracked, fmt_duration_long(m.bad_posture_duration_today())),
             true,
         ),
     ]
@@ -185,9 +201,10 @@ fn view_daily(app: &App) -> Element<'_, Message> {
 fn view_session(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
     let session_active = m.is_session_active();
+    let tracked = m.tracked_duration_session();
 
     let primary_value = if session_active {
-        fmt_duration_long(m.tracked_duration_session())
+        fmt_duration_long(tracked)
     } else {
         "--".to_string()
     };
@@ -200,17 +217,42 @@ fn view_session(app: &App) -> Element<'_, Message> {
     );
 
     let row_a = row![
-        secondary_card(ui::glyph::TRIANGLE, "Breaks", m.breaks_session().to_string(), false),
+        secondary_card(
+            ui::glyph::TRIANGLE,
+            "Breaks",
+            dash_if_untracked(tracked, m.breaks_session().to_string()),
+            false,
+        ),
         secondary_card(
             ui::glyph::CROSS,
             "Bad time",
-            fmt_duration_long(m.bad_posture_duration_session()),
+            dash_if_untracked(tracked, fmt_duration_long(m.bad_posture_duration_session())),
             true,
         ),
     ]
     .spacing(8);
 
-    let quality = m.posture_quality_session();
+    // No tracked time yet => show a neutral "--" with no progress fill, matching
+    // the other empty-state cards instead of an earned-looking "100%".
+    let quality_trailing: Element<'_, Message> = match m.posture_quality_session() {
+        Some(quality) => row![
+            progress_bar(0.0..=1.0, quality).length(100).girth(8),
+            text(format!("{:.0}%", quality * 100.0))
+                .size(16)
+                .font(ui::semibold())
+                .wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into(),
+        None => text("--")
+            .size(16)
+            .font(ui::semibold())
+            .color(T1)
+            .wrapping(iced::widget::text::Wrapping::None)
+            .into(),
+    };
+
     let quality_card = container(
         row![
             row![
@@ -220,11 +262,7 @@ fn view_session(app: &App) -> Element<'_, Message> {
             .spacing(6)
             .align_y(Alignment::Center),
             Space::new().width(Length::Fill),
-            progress_bar(0.0..=1.0, quality).length(100).girth(8),
-            text(format!("{:.0}%", quality * 100.0))
-                .size(16)
-                .font(ui::semibold())
-                .wrapping(iced::widget::text::Wrapping::None),
+            quality_trailing,
         ]
         .spacing(10)
         .align_y(Alignment::Center)
@@ -252,24 +290,25 @@ fn view_session(app: &App) -> Element<'_, Message> {
 fn view_all_time(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
 
+    let tracked = m.all_time_tracked_duration();
     let primary = primary_card(
         ui::glyph::CLOCK,
         "LIFETIME TRACKED",
-        fmt_duration_long(m.all_time_tracked_duration()),
-        GREEN,
+        dash_if_untracked(tracked, fmt_duration_long(tracked)),
+        if tracked.is_zero() { T1 } else { GREEN },
     );
 
     let row_a = row![
         secondary_card(
             ui::glyph::TRIANGLE,
             "Lifetime breaks",
-            m.all_time_breaks().to_string(),
+            dash_if_untracked(tracked, m.all_time_breaks().to_string()),
             false,
         ),
         secondary_card(
             ui::glyph::CROSS,
             "Bad time",
-            fmt_duration_long(m.all_time_bad_posture_duration()),
+            dash_if_untracked(tracked, fmt_duration_long(m.all_time_bad_posture_duration())),
             true,
         ),
     ]
@@ -283,7 +322,12 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
     };
 
     let row_b = row![
-        secondary_card(ui::glyph::GRID, "Days tracked", days.to_string(), false),
+        secondary_card(
+            ui::glyph::GRID,
+            "Days tracked",
+            dash_if_untracked(tracked, days.to_string()),
+            false,
+        ),
         secondary_card(ui::glyph::TREND_UP, "Avg breaks/day", avg_breaks, false),
     ]
     .spacing(8);
@@ -296,6 +340,8 @@ fn view_all_time(app: &App) -> Element<'_, Message> {
 
 fn view_quick(app: &App) -> Element<'_, Message> {
     let m = &app.metrics;
+    let tracked = m.tracked_duration_today();
+    let untracked = tracked.is_zero();
 
     let streak = m.good_posture_streak();
     let streak_ok = streak.is_some();
@@ -304,31 +350,32 @@ fn view_quick(app: &App) -> Element<'_, Message> {
         "STREAK",
         fmt_duration(streak),
         None,
-        if streak_ok { GREEN } else { RED },
+        if untracked { T1 } else if streak_ok { GREEN } else { RED },
     );
 
     let breaks = m.breaks_today();
     let breaks_card = quick_card(
         ui::glyph::TRIANGLE,
         "BREAKS TODAY",
-        breaks.to_string(),
+        dash_if_untracked(tracked, breaks.to_string()),
         None,
-        if breaks == 0 { GREEN } else { RED },
+        if untracked { T1 } else if breaks == 0 { GREEN } else { RED },
     );
 
+    // Quality is `None` before anything is tracked: render "--" with no progress
+    // fill and a neutral color rather than a misleading "100%".
     let quality = m.posture_quality_today();
-    let quality_color = if quality >= 0.8 {
-        GREEN
-    } else if quality >= 0.5 {
-        T1
-    } else {
-        RED
+    let quality_color = match quality {
+        Some(q) if q >= 0.8 => GREEN,
+        Some(q) if q >= 0.5 => T1,
+        Some(_) => RED,
+        None => T1,
     };
     let quality_card = quick_card(
         ui::glyph::BARS,
         "POSTURE QUALITY",
-        format!("{:.0}%", quality * 100.0),
-        Some(quality),
+        quality.map_or_else(|| "--".to_string(), |q| format!("{:.0}%", q * 100.0)),
+        quality,
         quality_color,
     );
 

@@ -15,7 +15,7 @@ UI: cross-platform layout & consistency). Each file is self-contained for handof
 ## Correctness & robustness
 | File                                                       | Summary                                                                                 | Severity   |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------- |
-| [camera_failure_panics.md](camera_failure_panics.md)       | `.expect`/`.unwrap` on camera paths panic app/thread; errors never reach the UI         | Med-high   |
+| ~~[camera_failure_panics.md](camera_failure_panics.md)~~       | ~~`.expect`/`.unwrap` on camera paths panic app/thread; errors never reach the UI~~         | ~~Med-high~~   |
 | ~~[cv_worker_model_mutex.md](cv_worker_model_mutex.md)~~   | ~~Model mutex held for worker thread lifetime; latent deadlock on reload/double-start~~ | ~~Medium~~ |
 | ~~[close_to_tray_behavior.md](close_to_tray_behavior.md)~~ | ~~✕ quits mid-tracking (loses unflushed session log); should hide to tray~~             | ~~Medium~~ |
 |                                                            |                                                                                         |            |
@@ -26,19 +26,19 @@ UI: cross-platform layout & consistency). Each file is self-contained for handof
 | ~~[refactor_update_cvinference_arm.md](refactor_update_cvinference_arm.md)~~ | ~~115-line update arm; bad-posture predicate ×3, alert-open logic ×2, model-load ×2~~ | ~~Medium~~  |
 | ~~[dedupe_metrics_log_parsing.md](dedupe_metrics_log_parsing.md)~~           | ~~`load_today` duplicates `parse_log_totals` line-for-line~~                          | ~~Low~~     |
 | ~~[replace_polling_with_blocking.md](replace_polling_with_blocking.md)~~     | ~~5 ms frame poll + 100 ms tray poll → watch channel / event handler~~                | ~~Low-med~~ |
-| [minor_idiomatic_cleanups.md](minor_idiomatic_cleanups.md)                   | Grouped small items: needless Box, stringly enums, dup constant, dead `InfType`, etc. | Low         |
+| ~~[minor_idiomatic_cleanups.md](minor_idiomatic_cleanups.md)~~                   | ~~Grouped small items: needless Box, stringly enums, dup constant, dead `InfType`, etc.~~ | ~~Low~~         |
 
 ## UI / cross-platform
-| File                                                               | Summary                                                                                   | Severity     |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | ------------ |
-| ~~[responsive_main_window.md](responsive_main_window.md)~~         | ~~Fixed 1206×961 non-resizable window fails on 768p / 150 % scaling; fixed-width panels~~ | ~~**High**~~ |
-| [alert_window_cross_platform.md](alert_window_cross_platform.md)   | Borderless+maximize behaves differently per WM/OS; fixed 72 px type; no keyboard dismiss  | Medium       |
-| ~~[icon_glyphs_cross_platform.md](icon_glyphs_cross_platform.md)~~ | ~~Unicode-glyph icons depend on per-OS font fallback; bundle fonts/icon set~~             | ~~Medium~~   |
-| ~~[consolidate_theme_tokens.md](consolidate_theme_tokens.md)~~     | ~~Hardcoded copies of ELEV/HOVER/PANEL tokens; legacy alias migration~~                   | ~~Medium~~   |
-| ~~[restyle_settings_panel.md](restyle_settings_panel.md)~~         | ~~Settings + first-run prompt still on legacy style, off the "Refined Slate" kit~~        | ~~Medium~~   |
-| [tray_icon_cross_platform.md](tray_icon_cross_platform.md)         | Procedural placeholder icon; macOS template image; status-colored icon idea               | Low-med      |
-| [responsive_expansion_priority.md](responsive_expansion_priority.md) | Width-expansion order: pad first, grow camera/graph, keep controls column fixed, center status panel at large widths | Medium |
-| [quality_metric_empty_state.md](quality_metric_empty_state.md)     | "100% quality" with zero data; inconsistent `--`/`0s` empty states                        | Low          |
+| File                                                                     | Summary                                                                                                                  | Severity     |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------ |
+| ~~[responsive_main_window.md](responsive_main_window.md)~~               | ~~Fixed 1206×961 non-resizable window fails on 768p / 150 % scaling; fixed-width panels~~                                | ~~**High**~~ |
+| ~~[alert_window_cross_platform.md](alert_window_cross_platform.md)~~     | ~~Borderless+maximize behaves differently per WM/OS; fixed 72 px type; no keyboard dismiss~~                             | ~~Medium~~   |
+| ~~[icon_glyphs_cross_platform.md](icon_glyphs_cross_platform.md)~~       | ~~Unicode-glyph icons depend on per-OS font fallback; bundle fonts/icon set~~                                            | ~~Medium~~   |
+| ~~[consolidate_theme_tokens.md](consolidate_theme_tokens.md)~~           | ~~Hardcoded copies of ELEV/HOVER/PANEL tokens; legacy alias migration~~                                                  | ~~Medium~~   |
+| ~~[restyle_settings_panel.md](restyle_settings_panel.md)~~               | ~~Settings + first-run prompt still on legacy style, off the "Refined Slate" kit~~                                       | ~~Medium~~   |
+| ~~[tray_icon_cross_platform.md](tray_icon_cross_platform.md)~~           | ~~Procedural placeholder icon; macOS template image; status-colored icon idea~~                                          | ~~Low-med~~  |
+| ~~[responsive_expansion_priority.md](responsive_expansion_priority.md)~~ | ~~Width-expansion order: pad first, grow camera/graph, keep controls column fixed, center status panel at large widths~~ | ~~Medium~~   |
+| ~~[quality_metric_empty_state.md](quality_metric_empty_state.md)~~       | ~~"100% quality" with zero data; inconsistent `--`/`0s` empty states~~                                                   | ~~Low~~      |
 
 ## Windows / platform-specific
 | File                                                                 | Summary                                                                                       | Severity |

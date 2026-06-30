@@ -1,7 +1,6 @@
-use ccap::{PropertyName, Provider};
+use ccap::{FrameOrientation, PropertyName, Provider};
 
 use std::error::Error;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -59,15 +58,28 @@ impl CameraWorker {
         thread::spawn(move || {
             let frame_len = (width * height * 4) as usize;
 
-            while self.core.running.load(Ordering::SeqCst) {
+            while self.core.is_running() {
                 match camera.grab_frame(3000) {
                     Ok(Some(frame)) => {
                         let data = frame.data().unwrap();
+                        // Windows (DirectShow / Media Foundation) commonly hands
+                        // back bottom-up RGBA buffers, which render upside-down
+                        // once iced treats the bytes as top-row-first. ccap reports
+                        // the row order per frame, so we detect it rather than
+                        // hardcoding a #[cfg(windows)] flip: some Windows cameras
+                        // already report top-down, and a blanket flip would invert
+                        // those. Normalize to upright once here, before the frame
+                        // fans out to the UI and CV, so the live feed and the pose
+                        // overlay stay in sync and the model sees an upright frame.
+                        let orientation = frame
+                            .info()
+                            .map(|info| info.orientation)
+                            .unwrap_or(FrameOrientation::TopToBottom);
                         let mut rgba = {
                             let mut pool = pool.lock().unwrap();
                             pool.pop().unwrap_or_else(|| vec![0u8; frame_len])
                         };
-                        rgba.copy_from_slice(data);
+                        copy_upright(&mut rgba, data, width, height, orientation);
 
                         let buf = RgbaBuffer::pooled(rgba, pool.clone());
 
@@ -77,7 +89,7 @@ impl CameraWorker {
                         // it hasn't taken yet) and fan it out to the UI.
                         self.shared.publish(captured_frame.clone());
 
-                        let _ = self.core.tx.send(captured_frame);
+                        let _ = self.core.publish(captured_frame);
                     }
                     Ok(None) => {
                         eprintln!("Unable to capture frame");
@@ -95,5 +107,60 @@ impl CameraWorker {
             self.shared.wake();
         });
         Ok(())
+    }
+}
+
+/// Copy a captured RGBA frame into `dst`, flipping it vertically when the camera
+/// reports a bottom-up buffer so the consumer always sees a top-row-first frame.
+/// `dst` and `src` are both `width * height * 4` contiguous RGBA bytes.
+fn copy_upright(dst: &mut [u8], src: &[u8], width: u32, height: u32, orientation: FrameOrientation) {
+    match orientation {
+        FrameOrientation::TopToBottom => dst.copy_from_slice(src),
+        FrameOrientation::BottomToTop => {
+            let row = (width * 4) as usize;
+            let last = height as usize - 1;
+            for (y, dst_row) in dst.chunks_exact_mut(row).enumerate() {
+                let src_start = (last - y) * row;
+                dst_row.copy_from_slice(&src[src_start..src_start + row]);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn top_to_bottom_is_copied_verbatim() {
+        // 1x3 RGBA image: three distinct rows, top-down. Must pass through unchanged.
+        let src: Vec<u8> = (0..3).flat_map(|r| [r, r, r, 255]).collect();
+        let mut dst = vec![0u8; src.len()];
+        copy_upright(&mut dst, &src, 1, 3, FrameOrientation::TopToBottom);
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn bottom_to_top_is_flipped_row_wise() {
+        // Same 1x3 image but reported bottom-up: rows must reverse, bytes within
+        // a row (RGBA channels, left-to-right) must stay put.
+        let src: Vec<u8> = (0..3).flat_map(|r| [r, r, r, 255]).collect();
+        let mut dst = vec![0u8; src.len()];
+        copy_upright(&mut dst, &src, 1, 3, FrameOrientation::BottomToTop);
+        let expected: Vec<u8> = (0..3).rev().flat_map(|r| [r, r, r, 255]).collect();
+        assert_eq!(dst, expected);
+    }
+
+    #[test]
+    fn flip_preserves_horizontal_order() {
+        // 2x2: a pure vertical flip must not mirror left-right (that would be a
+        // 180° rotation). Pixels carry their (x, y) so we can check both axes.
+        let px = |x: u8, y: u8| [x, y, 0, 255];
+        let src: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)]
+            .concat();
+        let mut dst = vec![0u8; src.len()];
+        copy_upright(&mut dst, &src, 2, 2, FrameOrientation::BottomToTop);
+        let expected: Vec<u8> = [px(0, 1), px(1, 1), px(0, 0), px(1, 0)].concat();
+        assert_eq!(dst, expected);
     }
 }

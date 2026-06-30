@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
-const HISTORY_SECS: f64 = 120.0;
+pub const HISTORY_SECS: f64 = 120.0;
 const ALL_TIME_FILE: &str = "all_time.toml";
 
 #[derive(Clone, Debug)]
@@ -224,13 +224,16 @@ impl MetricsStore {
         self.streak_since.map(|t| t.elapsed())
     }
 
-    pub fn posture_quality_today(&self) -> f32 {
+    /// Fraction of tracked time spent in good posture, or `None` when nothing
+    /// has been tracked yet (so the UI can show an empty state instead of a
+    /// misleading "100%").
+    pub fn posture_quality_today(&self) -> Option<f32> {
         let tracked = self.tracked_duration_today().as_secs_f64();
         if tracked <= 0.0 {
-            return 1.0;
+            return None;
         }
         let bad = self.bad_posture_duration_today().as_secs_f64();
-        (1.0 - (bad / tracked).clamp(0.0, 1.0)) as f32
+        Some((1.0 - (bad / tracked).clamp(0.0, 1.0)) as f32)
     }
 
     // --- Session getters ---
@@ -255,13 +258,15 @@ impl MetricsStore {
         Duration::from_secs_f64(self.tracked_secs_session + extra)
     }
 
-    pub fn posture_quality_session(&self) -> f32 {
+    /// Fraction of the session spent in good posture, or `None` when nothing
+    /// has been tracked yet in the session.
+    pub fn posture_quality_session(&self) -> Option<f32> {
         let tracked = self.tracked_duration_session().as_secs_f64();
         if tracked <= 0.0 {
-            return 1.0;
+            return None;
         }
         let bad = self.bad_posture_duration_session().as_secs_f64();
-        (1.0 - (bad / tracked).clamp(0.0, 1.0)) as f32
+        Some((1.0 - (bad / tracked).clamp(0.0, 1.0)) as f32)
     }
 
     pub fn is_session_active(&self) -> bool {
@@ -693,10 +698,10 @@ mod tests {
     // --- posture_quality getters ---
 
     #[test]
-    fn posture_quality_today_is_one_when_untracked() {
+    fn posture_quality_today_is_none_when_untracked() {
         let dir = tempdir().unwrap();
         let store = empty_store(dir.path().to_path_buf());
-        assert_eq!(store.posture_quality_today(), 1.0);
+        assert_eq!(store.posture_quality_today(), None);
     }
 
     #[test]
@@ -706,10 +711,10 @@ mod tests {
         store.tracked_secs_today = 10.0;
 
         store.bad_posture_secs_today = 5.0;
-        assert!((store.posture_quality_today() - 0.5).abs() < 1e-6);
+        assert!((store.posture_quality_today().unwrap() - 0.5).abs() < 1e-6);
 
         store.bad_posture_secs_today = 10.0;
-        assert_eq!(store.posture_quality_today(), 0.0);
+        assert_eq!(store.posture_quality_today(), Some(0.0));
     }
 
     #[test]
@@ -718,7 +723,7 @@ mod tests {
         let mut store = empty_store(dir.path().to_path_buf());
         store.tracked_secs_today = 10.0;
         store.bad_posture_secs_today = 20.0;
-        assert_eq!(store.posture_quality_today(), 0.0);
+        assert_eq!(store.posture_quality_today(), Some(0.0));
     }
 
     #[test]
@@ -727,7 +732,14 @@ mod tests {
         let mut store = empty_store(dir.path().to_path_buf());
         store.tracked_secs_session = 8.0;
         store.bad_posture_secs_session = 2.0;
-        assert!((store.posture_quality_session() - 0.75).abs() < 1e-6);
+        assert!((store.posture_quality_session().unwrap() - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn posture_quality_session_is_none_when_untracked() {
+        let dir = tempdir().unwrap();
+        let store = empty_store(dir.path().to_path_buf());
+        assert_eq!(store.posture_quality_session(), None);
     }
 
     // --- all-time getters ---

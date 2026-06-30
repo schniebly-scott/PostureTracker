@@ -183,15 +183,40 @@ mod v4l2 {
     const V4L2_PIX_FMT_YUYV: u32 = 0x5659_5559; // fourcc 'YUYV'
     const V4L2_FIELD_NONE: u32 = 1;
 
-    // struct v4l2_format: { __u32 type; <4 bytes pad to 8-byte align>; union fmt[200] }.
-    // We only populate the leading `struct v4l2_pix_format` (width, height,
-    // pixelformat, field, ...) within the union and let the driver fill the rest.
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    struct V4l2PixFormat {
+        width: u32,
+        height: u32,
+        pixelformat: u32,
+        field: u32,
+        bytesperline: u32,
+        sizeimage: u32,
+        colorspace: u32,
+        private: u32,
+        flags: u32,
+        ycbcr_enc: u32,
+        quantization: u32,
+        xfer_func: u32,
+    }
+
+    // The real union contains pointer-bearing members, so it is 8-byte aligned
+    // even though the pixel-format member itself only contains u32 fields.
+    #[repr(C, align(8))]
+    union V4l2FormatData {
+        pix: V4l2PixFormat,
+        raw: [u8; 200],
+    }
+
     #[repr(C)]
     struct V4l2Format {
         type_: u32,
-        _pad: u32,
-        fmt: [u8; 200],
+        fmt: V4l2FormatData,
     }
+
+    const _: () = assert!(std::mem::size_of::<V4l2PixFormat>() == 48);
+    const _: () = assert!(std::mem::offset_of!(V4l2Format, fmt) == 8);
+    const _: () = assert!(std::mem::size_of::<V4l2Format>() == 208);
 
     /// Switch the V4L2 device at `path` to YUYV capture at the given resolution.
     /// Returns whether the ioctl succeeded. ccap leaves the device's current
@@ -209,10 +234,20 @@ mod v4l2 {
             }
             let mut fmt: V4l2Format = std::mem::zeroed();
             fmt.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            fmt.fmt[0..4].copy_from_slice(&width.to_ne_bytes());
-            fmt.fmt[4..8].copy_from_slice(&height.to_ne_bytes());
-            fmt.fmt[8..12].copy_from_slice(&V4L2_PIX_FMT_YUYV.to_ne_bytes());
-            fmt.fmt[12..16].copy_from_slice(&V4L2_FIELD_NONE.to_ne_bytes());
+            fmt.fmt.pix = V4l2PixFormat {
+                width,
+                height,
+                pixelformat: V4L2_PIX_FMT_YUYV,
+                field: V4L2_FIELD_NONE,
+                bytesperline: 0,
+                sizeimage: 0,
+                colorspace: 0,
+                private: 0,
+                flags: 0,
+                ycbcr_enc: 0,
+                quantization: 0,
+                xfer_func: 0,
+            };
             let rc = libc::ioctl(fd, VIDIOC_S_FMT, &mut fmt as *mut _ as *mut c_void);
             libc::close(fd);
             rc == 0
