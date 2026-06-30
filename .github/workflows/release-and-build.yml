@@ -74,7 +74,10 @@ jobs:
             artifact: windows-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: macos-aarch64
+            artifact: macos-apple-silicon
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: macos-intel
 
     runs-on: ${{ matrix.os }}
 
