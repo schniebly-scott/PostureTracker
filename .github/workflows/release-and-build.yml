@@ -92,7 +92,17 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          # Bumped suffix to invalidate older caches that recorded a now-dangling ort download
+          # path (see cache-directories note below).
+          key: ${{ matrix.target }}-v2
+          # ort downloads the prebuilt ONNX Runtime into an OS cache dir OUTSIDE target/.
+          # rust-cache restores target/ (so ort-sys's build script is skipped as up-to-date),
+          # but on a fresh runner that external dir is gone, leaving a dangling link-search path
+          # and a "library 'onnxruntime' not found" failure. Cache it alongside so the two stay
+          # in sync. (Harmless on the Intel job, which links a from-source build instead.)
+          cache-directories: |
+            ~/Library/Caches/ort.pyke.io
+            ~/.cache/ort.pyke.io
 
       - name: Install Linux GUI deps
         if: matrix.os == 'ubuntu-24.04'
@@ -108,6 +118,27 @@ jobs:
             libfontconfig1-dev \
             libfreetype6-dev \
             pkg-config
+
+      # ---------- macOS: work around ort-sys's broken clang_rt.osx search path ----------
+      # ort-sys statically links `-lclang_rt.osx` and guesses its directory from
+      # `clang --print-search-dirs`, but that guess is wrong on newer Xcode (e.g. 26.5), so the
+      # linker fails with "library 'clang_rt.osx' not found". Locate the real fat archive
+      # (covers both arm64 and x86_64) and add its dir to the link search path.
+      - name: Fix clang_rt.osx link path (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          clang_dir="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang"
+          rt="$(find "$clang_dir" -name 'libclang_rt.osx.a' 2>/dev/null | head -n1)"
+          if [ -z "$rt" ]; then
+            rt="$(find "$(xcode-select -p)" -name 'libclang_rt.osx.a' 2>/dev/null | head -n1)"
+          fi
+          if [ -z "$rt" ]; then
+            echo "::error::libclang_rt.osx.a not found under $(xcode-select -p)"
+            exit 1
+          fi
+          echo "Found compiler-rt: $rt"
+          echo "RUSTFLAGS=-L native=$(dirname "$rt") ${RUSTFLAGS:-}" >> "$GITHUB_ENV"
 
       # ---------- Intel Mac: ort ships no prebuilt ONNX Runtime for x86_64-apple-darwin ----------
       # ort-sys 2.0.0-rc.12 expects ONNX Runtime 1.24.2. We build it from source as a static
