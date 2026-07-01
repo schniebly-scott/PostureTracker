@@ -49,19 +49,42 @@ impl CameraWorker {
             eprintln!("Warning: could not set capture resolution: {e}");
         }
 
-        let width = camera.get_property(PropertyName::Width)? as u32;
-        let height = camera.get_property(PropertyName::Height)? as u32;
-        println!("Camera started: {device} @ {width}x{height}");
+        let req_width = camera.get_property(PropertyName::Width)? as u32;
+        let req_height = camera.get_property(PropertyName::Height)? as u32;
+        println!("Camera started: {device} @ {req_width}x{req_height} (requested)");
 
         let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
         thread::spawn(move || {
-            let frame_len = (width * height * 4) as usize;
-
             while self.core.is_running() {
                 match camera.grab_frame(3000) {
                     Ok(Some(frame)) => {
-                        let data = frame.data().unwrap();
+                        // Trust the frame's *own* reported geometry rather than the
+                        // provider's negotiated Width/Height: on macOS the FaceTime
+                        // camera silently ignores set_resolution and delivers a
+                        // different size (e.g. 1280x720) than get_property reports
+                        // (640x480). Sizing the buffer from the stale request made
+                        // copy_from_slice panic on the first frame. Reading width,
+                        // height and stride per frame also handles row padding that
+                        // AVFoundation/Media Foundation add for alignment.
+                        let info = match frame.info() {
+                            Ok(info) => info,
+                            Err(e) => {
+                                eprintln!("Failed to read frame info: {e}");
+                                thread::sleep(Duration::from_millis(100));
+                                continue;
+                            }
+                        };
+                        let Some(src) = info.data_planes[0] else {
+                            eprintln!("Captured frame had no data plane");
+                            thread::sleep(Duration::from_millis(100));
+                            continue;
+                        };
+                        let width = info.width;
+                        let height = info.height;
+                        let src_stride = info.strides[0] as usize;
+                        let frame_len = (width * height * 4) as usize;
+
                         // Windows (DirectShow / Media Foundation) commonly hands
                         // back bottom-up RGBA buffers, which render upside-down
                         // once iced treats the bytes as top-row-first. ccap reports
@@ -71,15 +94,16 @@ impl CameraWorker {
                         // those. Normalize to upright once here, before the frame
                         // fans out to the UI and CV, so the live feed and the pose
                         // overlay stay in sync and the model sees an upright frame.
-                        let orientation = frame
-                            .info()
-                            .map(|info| info.orientation)
-                            .unwrap_or(FrameOrientation::TopToBottom);
+                        let orientation = info.orientation;
                         let mut rgba = {
                             let mut pool = pool.lock().unwrap();
                             pool.pop().unwrap_or_else(|| vec![0u8; frame_len])
                         };
-                        copy_upright(&mut rgba, data, width, height, orientation);
+                        // Camera geometry is stable within a session, so this only
+                        // resizes on the first frame; it also right-sizes any pooled
+                        // buffer left over from a previous, differently-sized session.
+                        rgba.resize(frame_len, 0);
+                        copy_upright(&mut rgba, src, width, height, src_stride, orientation);
 
                         let buf = RgbaBuffer::pooled(rgba, pool.clone());
 
@@ -112,18 +136,27 @@ impl CameraWorker {
 
 /// Copy a captured RGBA frame into `dst`, flipping it vertically when the camera
 /// reports a bottom-up buffer so the consumer always sees a top-row-first frame.
-/// `dst` and `src` are both `width * height * 4` contiguous RGBA bytes.
-fn copy_upright(dst: &mut [u8], src: &[u8], width: u32, height: u32, orientation: FrameOrientation) {
-    match orientation {
-        FrameOrientation::TopToBottom => dst.copy_from_slice(src),
-        FrameOrientation::BottomToTop => {
-            let row = (width * 4) as usize;
-            let last = height as usize - 1;
-            for (y, dst_row) in dst.chunks_exact_mut(row).enumerate() {
-                let src_start = (last - y) * row;
-                dst_row.copy_from_slice(&src[src_start..src_start + row]);
-            }
-        }
+/// `dst` is tightly packed `width * height * 4` RGBA bytes; `src` may have rows
+/// padded to `src_stride` bytes (>= `width * 4`), as AVFoundation and Media
+/// Foundation commonly do for alignment, so we copy `width * 4` bytes per row
+/// from the strided source rather than assuming a contiguous buffer.
+fn copy_upright(
+    dst: &mut [u8],
+    src: &[u8],
+    width: u32,
+    height: u32,
+    src_stride: usize,
+    orientation: FrameOrientation,
+) {
+    let row = (width * 4) as usize;
+    let last = height as usize - 1;
+    for (y, dst_row) in dst.chunks_exact_mut(row).enumerate() {
+        let src_y = match orientation {
+            FrameOrientation::TopToBottom => y,
+            FrameOrientation::BottomToTop => last - y,
+        };
+        let src_start = src_y * src_stride;
+        dst_row.copy_from_slice(&src[src_start..src_start + row]);
     }
 }
 
@@ -136,7 +169,7 @@ mod tests {
         // 1x3 RGBA image: three distinct rows, top-down. Must pass through unchanged.
         let src: Vec<u8> = (0..3).flat_map(|r| [r, r, r, 255]).collect();
         let mut dst = vec![0u8; src.len()];
-        copy_upright(&mut dst, &src, 1, 3, FrameOrientation::TopToBottom);
+        copy_upright(&mut dst, &src, 1, 3, 4, FrameOrientation::TopToBottom);
         assert_eq!(dst, src);
     }
 
@@ -146,7 +179,7 @@ mod tests {
         // a row (RGBA channels, left-to-right) must stay put.
         let src: Vec<u8> = (0..3).flat_map(|r| [r, r, r, 255]).collect();
         let mut dst = vec![0u8; src.len()];
-        copy_upright(&mut dst, &src, 1, 3, FrameOrientation::BottomToTop);
+        copy_upright(&mut dst, &src, 1, 3, 4, FrameOrientation::BottomToTop);
         let expected: Vec<u8> = (0..3).rev().flat_map(|r| [r, r, r, 255]).collect();
         assert_eq!(dst, expected);
     }
@@ -159,8 +192,26 @@ mod tests {
         let src: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)]
             .concat();
         let mut dst = vec![0u8; src.len()];
-        copy_upright(&mut dst, &src, 2, 2, FrameOrientation::BottomToTop);
+        copy_upright(&mut dst, &src, 2, 2, 8, FrameOrientation::BottomToTop);
         let expected: Vec<u8> = [px(0, 1), px(1, 1), px(0, 0), px(1, 0)].concat();
+        assert_eq!(dst, expected);
+    }
+
+    #[test]
+    fn padded_stride_rows_are_unpadded() {
+        // 2x2 image whose source rows are padded to a stride of 12 bytes (8 bytes
+        // of pixels + 4 bytes of padding) — mimics AVFoundation/Media Foundation
+        // row alignment. The padding must be dropped so `dst` stays tightly packed.
+        let px = |x: u8, y: u8| [x, y, 0, 255];
+        let pad = [0xEE, 0xEE, 0xEE, 0xEE];
+        let src: Vec<u8> = [
+            px(0, 0), px(1, 0), pad,
+            px(0, 1), px(1, 1), pad,
+        ]
+        .concat();
+        let mut dst = vec![0u8; 2 * 2 * 4];
+        copy_upright(&mut dst, &src, 2, 2, 12, FrameOrientation::TopToBottom);
+        let expected: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)].concat();
         assert_eq!(dst, expected);
     }
 }
