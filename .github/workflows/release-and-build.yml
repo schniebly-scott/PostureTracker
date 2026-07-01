@@ -343,6 +343,8 @@ jobs:
               <string>${{ needs.version-check.outputs.version }}</string>
               <key>NSHighResolutionCapable</key>
               <true/>
+              <key>NSCameraUsageDescription</key>
+              <string>${{ env.APP_NAME }} uses the camera to detect and track your posture. Video is processed locally and never leaves your device.</string>
           </dict>
           </plist>
           EOF
