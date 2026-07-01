@@ -51,6 +51,15 @@ impl ManagedService for CVManager {
     }
 
     fn spawn_worker(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Let the previous session's worker finish before taking the model: on
+        // an immediate stop→start it may not have returned the model to the
+        // slot yet, and taking too early would fail with "model is not loaded".
+        // The join is bounded to at most one in-flight inference — `stop` has
+        // already woken the frame channel, so a parked worker exits promptly.
+        if let Some(prev) = self.core.take_prev_worker() {
+            let _ = prev.join();
+        }
+
         // Take the model *out* of the shared slot for the run and hand it to the
         // worker by value. This keeps `load_model` from contending with a live
         // worker for the mutex and makes "model in use" explicit: the slot is

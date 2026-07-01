@@ -1,6 +1,7 @@
 use ccap::{FrameOrientation, PropertyName, Provider};
 
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -20,11 +21,49 @@ pub struct CameraWorker {
 
 impl CameraWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
+        if self.config.device.is_none() {
+            return Err("No camera device configured".into());
+        }
+
+        // Each worker runs against its *own* session's flag, snapshotted here.
+        // Looping on `core.is_running()` instead would let an immediate
+        // stop→start restart (camera/resolution change) re-arm the old thread:
+        // it sits inside `grab_frame(3000)` across the stop, and by the time it
+        // rechecked, the shared flag was true again — leaking one capture
+        // thread (and one open camera handle) per restart.
+        let running = self.core.session_flag();
+        // The previous session's thread may still be draining out of its last
+        // `grab_frame`. Join it from *this* thread — not the UI thread, where
+        // the up-to-3 s grab timeout would stall input — so the old provider
+        // has released the device before we open it (reopening the same device
+        // while the old handle streams fails with EBUSY on Linux).
+        let prev = self.core.take_prev_worker();
+        let core = self.core.clone();
+
+        let handle = thread::spawn(move || {
+            if let Some(prev) = prev {
+                let _ = prev.join();
+            }
+            if let Err(e) = self.run(&running) {
+                eprintln!("Camera worker failed to start: {e}");
+                // Reflect reality so the UI stops reporting a live camera and a
+                // later start can claim a new session.
+                running.store(false, Ordering::SeqCst);
+            }
+        });
+        core.adopt_worker(handle);
+        Ok(())
+    }
+
+    /// Open the device and pump frames until this session's flag goes false.
+    /// Runs entirely on the worker thread; setup errors are returned so `spawn`
+    /// can mark the session dead.
+    fn run(self, running: &AtomicBool) -> Result<(), Box<dyn Error>> {
         let device = self
             .config
             .device
             .as_deref()
-            .ok_or("No camera device configured")?;
+            .expect("device presence is checked before spawning");
 
         // Linux only: ccap can't decode the camera's default MJPEG (it renders
         // as green static / colored bars) and won't switch the device format
@@ -61,100 +100,98 @@ impl CameraWorker {
 
         let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
-        thread::spawn(move || {
-            while self.core.is_running() {
-                match camera.grab_frame(3000) {
-                    Ok(Some(frame)) => {
-                        // Trust the frame's *own* reported geometry rather than the
-                        // provider's negotiated Width/Height: on macOS the FaceTime
-                        // camera silently ignores set_resolution and delivers a
-                        // different size (e.g. 1280x720) than get_property reports
-                        // (640x480). Sizing the buffer from the stale request made
-                        // copy_from_slice panic on the first frame. Reading width,
-                        // height and stride per frame also handles row padding that
-                        // AVFoundation/Media Foundation add for alignment.
-                        let info = match frame.info() {
-                            Ok(info) => info,
-                            Err(e) => {
-                                eprintln!("Failed to read frame info: {e}");
-                                thread::sleep(Duration::from_millis(100));
-                                continue;
-                            }
-                        };
-                        let Some(src) = info.data_planes[0] else {
-                            eprintln!("Captured frame had no data plane");
+        while running.load(Ordering::SeqCst) {
+            match camera.grab_frame(3000) {
+                Ok(Some(frame)) => {
+                    // Trust the frame's *own* reported geometry rather than the
+                    // provider's negotiated Width/Height: on macOS the FaceTime
+                    // camera silently ignores set_resolution and delivers a
+                    // different size (e.g. 1280x720) than get_property reports
+                    // (640x480). Sizing the buffer from the stale request made
+                    // copy_from_slice panic on the first frame. Reading width,
+                    // height and stride per frame also handles row padding that
+                    // AVFoundation/Media Foundation add for alignment.
+                    let info = match frame.info() {
+                        Ok(info) => info,
+                        Err(e) => {
+                            eprintln!("Failed to read frame info: {e}");
                             thread::sleep(Duration::from_millis(100));
                             continue;
-                        };
-                        let width = info.width;
-                        let height = info.height;
-                        let src_stride = info.strides[0] as usize;
-                        let frame_len = (width * height * 4) as usize;
-
-                        // Windows (DirectShow / Media Foundation) commonly hands
-                        // back bottom-up RGBA buffers, which render upside-down
-                        // once iced treats the bytes as top-row-first. ccap reports
-                        // the row order per frame, so we detect it rather than
-                        // hardcoding a #[cfg(windows)] flip: some Windows cameras
-                        // already report top-down, and a blanket flip would invert
-                        // those. Normalize to upright once here, before the frame
-                        // fans out to the UI and CV, so the live feed and the pose
-                        // overlay stay in sync and the model sees an upright frame.
-                        let orientation = info.orientation;
-                        let mut rgba = {
-                            let mut pool = pool.lock().unwrap();
-                            pool.pop().unwrap_or_else(|| vec![0u8; frame_len])
-                        };
-                        // Camera geometry is stable within a session, so this only
-                        // resizes on the first frame; it also right-sizes any pooled
-                        // buffer left over from a previous, differently-sized session.
-                        rgba.resize(frame_len, 0);
-                        copy_upright(&mut rgba, src, width, height, src_stride, orientation);
-
-                        // Downscale to the configured cap if the frame exceeds it.
-                        // The upright native buffer is recycled straight back into
-                        // the pool; the smaller output isn't pooled (its size can
-                        // differ), mirroring the CV overlay's per-frame buffer.
-                        let (out_w, out_h) = target.fit(width, height);
-                        let captured_frame: Frame = if (out_w, out_h) == (width, height) {
-                            let buf = RgbaBuffer::pooled(rgba, pool.clone());
-                            (width, height, Arc::new(buf))
-                        } else {
-                            let src_img = image::RgbaImage::from_raw(width, height, rgba)
-                                .expect("upright buffer is width*height*4 bytes");
-                            let resized = image::imageops::resize(
-                                &src_img,
-                                out_w,
-                                out_h,
-                                image::imageops::FilterType::Triangle,
-                            );
-                            // Reclaim the native scratch buffer for reuse.
-                            pool.lock().unwrap().push(src_img.into_raw());
-                            let buf = RgbaBuffer::unpooled(resized.into_raw());
-                            (out_w, out_h, Arc::new(buf))
-                        };
-
-                        // Hand the latest frame to the CV worker (overwriting any
-                        // it hasn't taken yet) and fan it out to the UI.
-                        self.shared.publish(captured_frame.clone());
-
-                        let _ = self.core.publish(captured_frame);
-                    }
-                    Ok(None) => {
-                        eprintln!("Unable to capture frame");
+                        }
+                    };
+                    let Some(src) = info.data_planes[0] else {
+                        eprintln!("Captured frame had no data plane");
                         thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        eprintln!("Camera capture failed: {}", e);
-                        thread::sleep(Duration::from_millis(100));
-                    }
+                        continue;
+                    };
+                    let width = info.width;
+                    let height = info.height;
+                    let src_stride = info.strides[0] as usize;
+                    let frame_len = (width * height * 4) as usize;
+
+                    // Windows (DirectShow / Media Foundation) commonly hands
+                    // back bottom-up RGBA buffers, which render upside-down
+                    // once iced treats the bytes as top-row-first. ccap reports
+                    // the row order per frame, so we detect it rather than
+                    // hardcoding a #[cfg(windows)] flip: some Windows cameras
+                    // already report top-down, and a blanket flip would invert
+                    // those. Normalize to upright once here, before the frame
+                    // fans out to the UI and CV, so the live feed and the pose
+                    // overlay stay in sync and the model sees an upright frame.
+                    let orientation = info.orientation;
+                    let mut rgba = {
+                        let mut pool = pool.lock().unwrap();
+                        pool.pop().unwrap_or_else(|| vec![0u8; frame_len])
+                    };
+                    // Camera geometry is stable within a session, so this only
+                    // resizes on the first frame; it also right-sizes any pooled
+                    // buffer left over from a previous, differently-sized session.
+                    rgba.resize(frame_len, 0);
+                    copy_upright(&mut rgba, src, width, height, src_stride, orientation);
+
+                    // Downscale to the configured cap if the frame exceeds it.
+                    // The upright native buffer is recycled straight back into
+                    // the pool; the smaller output isn't pooled (its size can
+                    // differ), mirroring the CV overlay's per-frame buffer.
+                    let (out_w, out_h) = target.fit(width, height);
+                    let captured_frame: Frame = if (out_w, out_h) == (width, height) {
+                        let buf = RgbaBuffer::pooled(rgba, pool.clone());
+                        (width, height, Arc::new(buf))
+                    } else {
+                        let src_img = image::RgbaImage::from_raw(width, height, rgba)
+                            .expect("upright buffer is width*height*4 bytes");
+                        let resized = image::imageops::resize(
+                            &src_img,
+                            out_w,
+                            out_h,
+                            image::imageops::FilterType::Triangle,
+                        );
+                        // Reclaim the native scratch buffer for reuse.
+                        pool.lock().unwrap().push(src_img.into_raw());
+                        let buf = RgbaBuffer::unpooled(resized.into_raw());
+                        (out_w, out_h, Arc::new(buf))
+                    };
+
+                    // Hand the latest frame to the CV worker (overwriting any
+                    // it hasn't taken yet) and fan it out to the UI.
+                    self.shared.publish(captured_frame.clone());
+
+                    let _ = self.core.publish(captured_frame);
+                }
+                Ok(None) => {
+                    eprintln!("Unable to capture frame");
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    eprintln!("Camera capture failed: {}", e);
+                    thread::sleep(Duration::from_millis(100));
                 }
             }
+        }
 
-            // No more frames will arrive; wake the CV worker so it observes the
-            // stop and leaves its blocking wait instead of parking forever.
-            self.shared.wake();
-        });
+        // No more frames will arrive; wake the CV worker so it observes the
+        // stop and leaves its blocking wait instead of parking forever.
+        self.shared.wake();
         Ok(())
     }
 }
@@ -214,8 +251,7 @@ mod tests {
         // 2x2: a pure vertical flip must not mirror left-right (that would be a
         // 180° rotation). Pixels carry their (x, y) so we can check both axes.
         let px = |x: u8, y: u8| [x, y, 0, 255];
-        let src: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)]
-            .concat();
+        let src: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)].concat();
         let mut dst = vec![0u8; src.len()];
         copy_upright(&mut dst, &src, 2, 2, 8, FrameOrientation::BottomToTop);
         let expected: Vec<u8> = [px(0, 1), px(1, 1), px(0, 0), px(1, 0)].concat();
@@ -229,11 +265,7 @@ mod tests {
         // row alignment. The padding must be dropped so `dst` stays tightly packed.
         let px = |x: u8, y: u8| [x, y, 0, 255];
         let pad = [0xEE, 0xEE, 0xEE, 0xEE];
-        let src: Vec<u8> = [
-            px(0, 0), px(1, 0), pad,
-            px(0, 1), px(1, 1), pad,
-        ]
-        .concat();
+        let src: Vec<u8> = [px(0, 0), px(1, 0), pad, px(0, 1), px(1, 1), pad].concat();
         let mut dst = vec![0u8; 2 * 2 * 4];
         copy_upright(&mut dst, &src, 2, 2, 12, FrameOrientation::TopToBottom);
         let expected: Vec<u8> = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)].concat();
