@@ -188,6 +188,17 @@ jobs:
           echo "ORT_LIB_LOCATION=$ort_root" >> "$GITHUB_ENV"
           echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
 
+      # ccap-rs always compiles its AVX2 translation unit for x86_64 but only adds -mavx2 when its
+      # build script's HOST arch is x86 (a cc `#[cfg(target_arch)]` bug). Cross-compiling from the
+      # arm64 runner, the flags are dropped and the intrinsics fail to compile. Force the AVX2
+      # baseline via a target-scoped CXXFLAGS — safe here since every Intel Mac on macOS 11+ (this
+      # build's minimum) is Haswell or newer and supports AVX2.
+      - name: Enable AVX2 for ccap-rs C++ build (Intel Mac)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          echo "CXXFLAGS_x86_64-apple-darwin=-mavx2 -mfma" >> "$GITHUB_ENV"
+          echo "CXXFLAGS_x86_64_apple_darwin=-mavx2 -mfma" >> "$GITHUB_ENV"
+
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
 
