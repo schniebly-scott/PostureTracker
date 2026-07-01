@@ -141,16 +141,18 @@ jobs:
           echo "RUSTFLAGS=-L native=$(dirname "$rt") ${RUSTFLAGS:-}" >> "$GITHUB_ENV"
 
       # ---------- Intel Mac: ort ships no prebuilt ONNX Runtime for x86_64-apple-darwin ----------
-      # ort-sys 2.0.0-rc.12 expects ONNX Runtime 1.24.2. We build it from source as a static
-      # library and point ORT_LIB_LOCATION at the build tree; ort's build script links against
-      # that instead of trying (and failing) to download a prebuilt for this target.
+      # ort-sys 2.0.0-rc.12 expects ONNX Runtime 1.24.2. We build it from source as a *shared*
+      # library and link ort against it dynamically. (Static linking is impractical here: ort-sys
+      # hard-codes a static-deps list — re2, abseil, nsync, ... — matching its own prebuild config,
+      # which a stock `build.py` build doesn't reproduce.) The resulting libonnxruntime.dylib
+      # bundles those deps internally, so ort only needs to link the single dylib.
       - name: Cache ONNX Runtime build (Intel Mac)
         if: matrix.target == 'x86_64-apple-darwin'
         id: ort-build-cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/onnxruntime/build/Release
-          key: onnxruntime-1.24.2-x86_64-apple-darwin
+          key: onnxruntime-1.24.2-x86_64-apple-darwin-shared
 
       - name: Build ONNX Runtime from source (Intel Mac)
         if: matrix.target == 'x86_64-apple-darwin' && steps.ort-build-cache.outputs.cache-hit != 'true'
@@ -160,12 +162,13 @@ jobs:
           git clone --depth 1 --branch v1.24.2 --recurse-submodules --shallow-submodules \
             https://github.com/microsoft/onnxruntime.git "$RUNNER_TEMP/onnxruntime"
           # Cross-compile for x86_64 from the arm64 runner; --skip_tests because we can't run
-          # the x86_64 test binaries here.
+          # the x86_64 test binaries here. --build_shared_lib produces libonnxruntime.dylib.
           python3 "$RUNNER_TEMP/onnxruntime/tools/ci_build/build.py" \
             --build_dir "$RUNNER_TEMP/onnxruntime/build" \
             --config Release \
             --parallel \
             --osx_arch x86_64 \
+            --build_shared_lib \
             --skip_tests \
             --skip_submodule_sync \
             --compile_no_warning_as_error \
@@ -176,21 +179,14 @@ jobs:
         run: |
           set -euo pipefail
           ort_root="$RUNNER_TEMP/onnxruntime/build/Release"
-          echo "ORT_LIB_LOCATION=$ort_root" >> "$GITHUB_ENV"
-          # ort-sys statically links the bundled deps (re2, abseil, protobuf, onnx, ...) and
-          # guesses their _deps/<name>-build paths, but ONNX Runtime doesn't place every lib
-          # exactly there (e.g. re2). Add every directory that contains a .a as a link-search
-          # path so all of ort-sys's `-l static=...` references resolve regardless of layout.
-          if ! find "$ort_root" -name 'libre2.a' | grep -q .; then
-            echo "::error::libre2.a not found under $ort_root; ONNX Runtime build may be incomplete"
-            find "$ort_root" -maxdepth 4 -name '*.a' | sort
+          if ! ls "$ort_root"/libonnxruntime*.dylib >/dev/null 2>&1; then
+            echo "::error::libonnxruntime.dylib not found under $ort_root"
             exit 1
           fi
-          extra=""
-          while IFS= read -r dir; do
-            extra="$extra -L native=$dir"
-          done < <(find "$ort_root" -name '*.a' -exec dirname {} \; | sort -u)
-          echo "RUSTFLAGS=${RUSTFLAGS:-}$extra" >> "$GITHUB_ENV"
+          # ORT_PREFER_DYNAMIC_LINK makes ort-sys emit just `-l onnxruntime` against this dir
+          # instead of trying to statically link the bundled deps.
+          echo "ORT_LIB_LOCATION=$ort_root" >> "$GITHUB_ENV"
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
 
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
@@ -300,6 +296,23 @@ jobs:
           mkdir -p "$APP_DIR/Contents/MacOS"
           mkdir -p "$APP_DIR/Contents/Resources"
           cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }} "$APP_DIR/Contents/MacOS/"
+          # Intel build links libonnxruntime.dylib dynamically, so ship it inside the bundle and
+          # repoint the executable at @rpath/@executable_path so dyld finds it next to the binary.
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            bin="$APP_DIR/Contents/MacOS/${{ env.BIN_NAME }}"
+            cp -L "$RUNNER_TEMP"/onnxruntime/build/Release/libonnxruntime*.dylib "$APP_DIR/Contents/MacOS/"
+            dep="$(otool -L "$bin" | awk '/libonnxruntime/{print $1; exit}')"
+            if [ -z "$dep" ]; then echo "::error::binary has no libonnxruntime dependency"; exit 1; fi
+            base="$(basename "$dep")"
+            install_name_tool -id "@rpath/$base" "$APP_DIR/Contents/MacOS/$base"
+            install_name_tool -change "$dep" "@rpath/$base" "$bin"
+            install_name_tool -add_rpath @executable_path "$bin"
+            # install_name_tool invalidates signatures, so (ad-hoc) re-sign dylib(s) then the binary
+            for dylib in "$APP_DIR/Contents/MacOS/"libonnxruntime*.dylib; do
+              codesign --force --sign - "$dylib"
+            done
+            codesign --force --sign - "$bin"
+          fi
           cat > "$APP_DIR/Contents/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
