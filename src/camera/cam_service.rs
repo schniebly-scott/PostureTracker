@@ -58,6 +58,14 @@ impl CameraManager {
     pub fn set_device(&self, device: Option<String>) {
         self.config.lock().unwrap().device = device;
     }
+
+    /// Update the downscale cap applied to captured frames. Takes effect when
+    /// the camera is (re)started.
+    pub fn set_capture_resolution(&self, width: u32, height: u32) {
+        let mut config = self.config.lock().unwrap();
+        config.capture_width = width;
+        config.capture_height = height;
+    }
 }
 
 impl ManagedService for CameraManager {

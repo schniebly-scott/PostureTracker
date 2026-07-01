@@ -70,8 +70,20 @@ impl iced_subscription::Recipe for CameraSubscription {
         let mut rx = self.rx;
 
         let s = async_stream::stream! {
-            while let Ok(frame) = rx.recv().await {
-                yield frame_handle(frame);
+            loop {
+                match rx.recv().await {
+                    Ok(frame) => yield frame_handle(frame),
+                    // A live feed only wants the newest frame. If the UI briefly
+                    // falls behind and the bounded broadcast drops intermediate
+                    // frames, skip to the latest and keep going rather than
+                    // ending the stream — a terminated stream tears down the
+                    // subscription and stalls the feed (visible as a flickering,
+                    // non-constant feed). This lag is far more likely at higher
+                    // capture resolutions, where each frame is larger and the UI
+                    // drains the channel more slowly.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
         };
         Box::pin(s)
@@ -118,12 +130,19 @@ impl iced_subscription::Recipe for CVSubscription {
         let mut rx = self.rx;
 
         let s = async_stream::stream! {
-            while let Ok(inference) = rx.recv().await {
-                yield InferenceUpdate {
-                    handle: frame_handle(inference.frame),
-                    time_metrics: inference.time_metrics,
-                    posture_angle_deg: inference.posture_angle_deg,
-                };
+            loop {
+                match rx.recv().await {
+                    Ok(inference) => yield InferenceUpdate {
+                        handle: frame_handle(inference.frame),
+                        time_metrics: inference.time_metrics,
+                        posture_angle_deg: inference.posture_angle_deg,
+                    },
+                    // Skip dropped results on lag rather than ending the stream
+                    // (which would stop inference updates entirely); the next
+                    // frame's result is what we want anyway.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
         };
         Box::pin(s)

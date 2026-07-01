@@ -259,6 +259,7 @@ pub enum Message {
     OpenSettingsPressed,
     CloseSettingsPressed,
     CameraSelected(crate::camera::CameraOption),
+    CaptureResolutionSelected(crate::camera::CaptureResolution),
     CameraPromptConfirmed,
     RefreshCamerasPressed,
 }
@@ -866,6 +867,22 @@ impl App {
                 self.pipelines.camera_manager.set_device(Some(option.path));
                 // Apply immediately if a session is live so the feed switches
                 // to the newly chosen device.
+                if self.pipelines.camera_manager.is_running() {
+                    self.pipelines.camera_manager.stop();
+                    if let Err(e) = self.pipelines.camera_manager.start() {
+                        eprintln!("Failed to restart camera: {e}");
+                    }
+                }
+                Task::none()
+            }
+            Message::CaptureResolutionSelected(res) => {
+                self.config.camera.capture_width = res.width;
+                self.config.camera.capture_height = res.height;
+                self.save_config();
+                self.pipelines
+                    .camera_manager
+                    .set_capture_resolution(res.width, res.height);
+                // Restart a live session so the new cap takes effect immediately.
                 if self.pipelines.camera_manager.is_running() {
                     self.pipelines.camera_manager.stop();
                     if let Err(e) = self.pipelines.camera_manager.start() {

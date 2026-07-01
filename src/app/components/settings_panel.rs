@@ -5,6 +5,7 @@ use iced::Length::Fill;
 use crate::app::components::ui;
 use crate::app::theme::{AMBER, T2};
 use crate::app::{App, Message, MIN_ALERT_COOLDOWN_SECS};
+use crate::camera::CaptureResolution;
 
 /// A semibold text label sized for the kit button system.
 fn btn_label(label: &str) -> Element<'_, Message> {
@@ -71,14 +72,48 @@ fn camera_pick_list(app: &App, width: Length) -> Element<'_, Message> {
     .into()
 }
 
-/// Settings-page camera row: dropdown plus a refresh button.
+/// Settings-page camera row: device dropdown plus a refresh button, followed by
+/// the capture-resolution cap.
 fn camera_selector(app: &App) -> Element<'_, Message> {
-    row![
+    let device_row = row![
         camera_pick_list(app, Fill),
         ui::secondary_button(btn_label("Refresh")).on_press(Message::RefreshCamerasPressed),
     ]
     .spacing(10)
-    .align_y(Alignment::Center)
+    .align_y(Alignment::Center);
+
+    let resolution = column![
+        text("Resolution").size(13).color(T2),
+        resolution_pick_list(app),
+        text(
+            "Caps the processed and displayed frame size (aspect ratio is preserved). \
+             Smaller sizes use less CPU/GPU and can smooth out a stuttering feed."
+        )
+        .size(12)
+        .color(T2),
+    ]
+    .spacing(6);
+
+    column![device_row, resolution].spacing(14).into()
+}
+
+/// The capture-resolution cap dropdown. The stored width/height always match one
+/// of `CaptureResolution::OPTIONS` (the user can only pick from this list), so a
+/// selection is highlighted rather than falling back to the placeholder.
+fn resolution_pick_list(app: &App) -> Element<'_, Message> {
+    let selected = CaptureResolution::OPTIONS.iter().copied().find(|r| {
+        r.width == app.config.camera.capture_width && r.height == app.config.camera.capture_height
+    });
+
+    pick_list(
+        &CaptureResolution::OPTIONS[..],
+        selected,
+        Message::CaptureResolutionSelected,
+    )
+    .placeholder("Select a resolution")
+    .text_size(14)
+    .width(Fill)
+    .padding([8, 12])
     .into()
 }
 
