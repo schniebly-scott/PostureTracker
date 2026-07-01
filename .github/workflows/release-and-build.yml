@@ -318,11 +318,11 @@ jobs:
             install_name_tool -id "@rpath/$base" "$APP_DIR/Contents/MacOS/$base"
             install_name_tool -change "$dep" "@rpath/$base" "$bin"
             install_name_tool -add_rpath @executable_path "$bin"
-            # install_name_tool invalidates signatures, so (ad-hoc) re-sign dylib(s) then the binary
+            # install_name_tool invalidates signatures, so (ad-hoc) re-sign the dylib(s) first;
+            # the whole bundle is sealed further down (inside-out signing).
             for dylib in "$APP_DIR/Contents/MacOS/"libonnxruntime*.dylib; do
               codesign --force --sign - "$dylib"
             done
-            codesign --force --sign - "$bin"
           fi
           cat > "$APP_DIR/Contents/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -343,9 +343,18 @@ jobs:
               <string>${{ needs.version-check.outputs.version }}</string>
               <key>NSHighResolutionCapable</key>
               <true/>
+              <key>NSCameraUsageDescription</key>
+              <string>${{ env.APP_NAME }} uses the camera to detect and track your posture. Video is processed locally and never leaves your device.</string>
           </dict>
           </plist>
           EOF
+          # Ad-hoc sign (`-`) the whole bundle now that Info.plist and any nested dylibs are in
+          # place. This seals the bundle so it isn't seen as tampered/inconsistent, but it does
+          # NOT satisfy Gatekeeper for downloaded apps — that requires a Developer ID signature +
+          # Apple notarization. Until then, users must clear the quarantine attribute on first
+          # launch; see the macOS install steps in README.md.
+          codesign --force --sign - "$APP_DIR"
+          codesign --verify --strict --verbose=2 "$APP_DIR"
           cd dist
           zip -r "${{ env.BIN_NAME }}-${{ matrix.artifact }}.zip" "${{ env.APP_NAME }}.app"
 
@@ -376,3 +385,15 @@ jobs:
           files: artifacts/**/*
           generate_release_notes: true
           draft: true
+          body: |
+            ### First launch notes
+            These builds are not yet code-signed/notarized, so the OS may warn on first launch.
+            This is expected for a new indie app and does not mean the download is unsafe.
+
+            - **macOS** (shows "app is damaged and can't be opened"): move the app to
+              Applications, then run
+              `xattr -cr "/Applications/Posture Tracker.app"` and open it normally.
+            - **Windows** (SmartScreen "Windows protected your PC"): click **More info** →
+              **Run anyway**.
+
+            See the README for details.

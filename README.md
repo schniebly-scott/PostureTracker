@@ -28,6 +28,25 @@ To run it anyway:
 
 We plan to ship a code-signed build in the future, which will remove this prompt.
 
+### First launch on macOS ("app is damaged")
+The macOS release is not yet signed with an Apple Developer ID or notarized, so after you
+download and unzip it, macOS Gatekeeper marks it as quarantined and shows
+**"Posture Tracker.app is damaged and can't be opened"** (or an "unidentified developer"
+warning). This is expected for an un-notarized indie app and does **not** mean the download
+is unsafe or actually corrupted.
+
+To run it, remove the quarantine attribute after moving the app to **Applications** (or
+wherever you keep it):
+
+```sh
+xattr -cr "/Applications/Posture Tracker.app"
+```
+
+Then open it normally. (For the "damaged" variant, right-click → **Open** usually does not
+work — the `xattr` command above is the reliable fix.)
+
+We plan to ship a signed and notarized build in the future, which will remove this step.
+
 ## Process
 **UI Rough Draft in LibreOffice**
 
