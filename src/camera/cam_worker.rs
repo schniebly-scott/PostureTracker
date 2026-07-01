@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::SharedFrame;
-use crate::camera::RgbaBuffer;
+use crate::camera::{CaptureResolution, RgbaBuffer};
 use crate::config::CameraConfig;
 use crate::utils::ServiceCore;
 
@@ -52,6 +52,12 @@ impl CameraWorker {
         let req_width = camera.get_property(PropertyName::Width)? as u32;
         let req_height = camera.get_property(PropertyName::Height)? as u32;
         println!("Camera started: {device} @ {req_width}x{req_height} (requested)");
+
+        // User-configured cap: frames larger than this are downscaled (aspect
+        // preserved) before they fan out to the UI and CV. Keeps the FaceTime
+        // camera's ignored-resolution 720p (and any oversized feed) from
+        // wasting CPU/GPU and stuttering the live view.
+        let target = CaptureResolution::new(self.config.capture_width, self.config.capture_height);
 
         let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -105,9 +111,28 @@ impl CameraWorker {
                         rgba.resize(frame_len, 0);
                         copy_upright(&mut rgba, src, width, height, src_stride, orientation);
 
-                        let buf = RgbaBuffer::pooled(rgba, pool.clone());
-
-                        let captured_frame: Frame = (width, height, Arc::new(buf));
+                        // Downscale to the configured cap if the frame exceeds it.
+                        // The upright native buffer is recycled straight back into
+                        // the pool; the smaller output isn't pooled (its size can
+                        // differ), mirroring the CV overlay's per-frame buffer.
+                        let (out_w, out_h) = target.fit(width, height);
+                        let captured_frame: Frame = if (out_w, out_h) == (width, height) {
+                            let buf = RgbaBuffer::pooled(rgba, pool.clone());
+                            (width, height, Arc::new(buf))
+                        } else {
+                            let src_img = image::RgbaImage::from_raw(width, height, rgba)
+                                .expect("upright buffer is width*height*4 bytes");
+                            let resized = image::imageops::resize(
+                                &src_img,
+                                out_w,
+                                out_h,
+                                image::imageops::FilterType::Triangle,
+                            );
+                            // Reclaim the native scratch buffer for reuse.
+                            pool.lock().unwrap().push(src_img.into_raw());
+                            let buf = RgbaBuffer::unpooled(resized.into_raw());
+                            (out_w, out_h, Arc::new(buf))
+                        };
 
                         // Hand the latest frame to the CV worker (overwriting any
                         // it hasn't taken yet) and fan it out to the UI.

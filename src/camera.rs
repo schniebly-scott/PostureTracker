@@ -259,6 +259,69 @@ mod v4l2 {
 pub const CAPTURE_WIDTH: u32 = 640;
 pub const CAPTURE_HEIGHT: u32 = 480;
 
+/// A user-selectable cap on the processed/displayed frame size. The camera may
+/// deliver more pixels than this (some ignore the requested resolution); frames
+/// are downscaled to fit within the cap, preserving aspect ratio. `0` in either
+/// field means "native" — no downscale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureResolution {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl CaptureResolution {
+    /// Native — capture and display whatever the camera delivers, no downscale.
+    pub const NATIVE: Self = Self { width: 0, height: 0 };
+
+    /// Common sizes offered in the settings dropdown, largest first.
+    pub const OPTIONS: [Self; 7] = [
+        Self::NATIVE,
+        Self { width: 1280, height: 720 },
+        Self { width: 960, height: 540 },
+        Self { width: 848, height: 480 },
+        Self { width: 640, height: 480 },
+        Self { width: 640, height: 360 },
+        Self { width: 320, height: 240 },
+    ];
+
+    pub fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    /// A cap of 0 in either dimension disables downscaling.
+    pub fn is_native(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    /// Output dimensions for a `src_w`x`src_h` frame: the largest size that fits
+    /// within this cap while preserving aspect ratio. Never upscales — a frame
+    /// already within the cap (or a native cap) is returned unchanged.
+    pub fn fit(self, src_w: u32, src_h: u32) -> (u32, u32) {
+        if self.is_native() || src_w == 0 || src_h == 0 {
+            return (src_w, src_h);
+        }
+        let scale = (self.width as f64 / src_w as f64)
+            .min(self.height as f64 / src_h as f64)
+            .min(1.0);
+        if scale >= 1.0 {
+            return (src_w, src_h);
+        }
+        let w = ((src_w as f64 * scale).round() as u32).max(1);
+        let h = ((src_h as f64 * scale).round() as u32).max(1);
+        (w, h)
+    }
+}
+
+impl std::fmt::Display for CaptureResolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_native() {
+            f.write_str("Native (no downscale)")
+        } else {
+            write!(f, "{}\u{00D7}{}", self.width, self.height)
+        }
+    }
+}
+
 /// Put the given V4L2 device into YUYV mode before capture. See [`v4l2::set_yuyv`].
 #[cfg(target_os = "linux")]
 pub fn set_capture_format(device: &str) -> bool {
@@ -275,3 +338,42 @@ pub fn set_capture_format(_device: &str) -> bool {
 /// RGBA frame sent to the UI
 /// (width, height, RgbaBuffer { frame, pool-pointer })
 pub type Frame = (u32, u32, Arc<RgbaBuffer>);
+
+#[cfg(test)]
+mod tests {
+    use super::CaptureResolution;
+
+    #[test]
+    fn native_cap_never_downscales() {
+        assert_eq!(CaptureResolution::NATIVE.fit(1280, 720), (1280, 720));
+        // A zero in either field is treated as native.
+        assert_eq!(CaptureResolution::new(0, 480).fit(1280, 720), (1280, 720));
+    }
+
+    #[test]
+    fn fit_preserves_aspect_ratio() {
+        // 16:9 source into a 4:3 cap fits by the tighter (width) axis, so the
+        // output stays 16:9 (640x360) rather than being squished to 640x480.
+        let cap = CaptureResolution::new(640, 480);
+        assert_eq!(cap.fit(1280, 720), (640, 360));
+    }
+
+    #[test]
+    fn fit_never_upscales() {
+        // Source already within the cap is returned unchanged.
+        let cap = CaptureResolution::new(1280, 720);
+        assert_eq!(cap.fit(640, 480), (640, 480));
+    }
+
+    #[test]
+    fn fit_matches_exact_cap_when_same_aspect() {
+        let cap = CaptureResolution::new(320, 240);
+        assert_eq!(cap.fit(640, 480), (320, 240));
+    }
+
+    #[test]
+    fn display_labels_native_and_sizes() {
+        assert_eq!(CaptureResolution::NATIVE.to_string(), "Native (no downscale)");
+        assert_eq!(CaptureResolution::new(640, 480).to_string(), "640\u{00D7}480");
+    }
+}

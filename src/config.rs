@@ -26,13 +26,37 @@ pub struct SessionConfig {
     pub start_in_background: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CameraConfig {
     /// Device name to capture from. `None` means no camera has been chosen yet,
     /// which triggers the first-run selection prompt. Omitted from the TOML file
     /// when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+    /// Cap the captured frame to at most this size (preserving aspect ratio)
+    /// before it's processed and displayed. Cameras often deliver more pixels
+    /// than needed — e.g. macOS ignores the resolution request and hands back
+    /// 720p — which wastes CPU/GPU and can make the live feed stutter. `0` in
+    /// either field means "native" (no downscale).
+    #[serde(default = "CameraConfig::default_capture_width")]
+    pub capture_width: u32,
+    #[serde(default = "CameraConfig::default_capture_height")]
+    pub capture_height: u32,
+}
+
+impl CameraConfig {
+    fn default_capture_width() -> u32 { 640 }
+    fn default_capture_height() -> u32 { 480 }
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            device: None,
+            capture_width: Self::default_capture_width(),
+            capture_height: Self::default_capture_height(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -68,7 +92,7 @@ pub struct BackgroundConfig {
 impl BackgroundConfig {
     fn default_interval_secs() -> u64 { 60 }
     fn default_frames_per_sample() -> usize { 3 }
-    fn default_alert_cooldown_secs() -> u64 { 60 }
+    fn default_alert_cooldown_secs() -> u64 { 5 }
     fn default_force_dismiss() -> bool { true }
 }
 
@@ -147,7 +171,7 @@ mod tests {
         let c = BackgroundConfig::default();
         assert_eq!(c.interval_secs, 60);
         assert_eq!(c.frames_per_sample, 3);
-        assert_eq!(c.alert_cooldown_secs, 60);
+        assert_eq!(c.alert_cooldown_secs, 5);
         assert!(c.force_dismiss);
     }
 
