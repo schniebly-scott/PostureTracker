@@ -19,25 +19,37 @@ pub struct CVWorker {
 
 impl CVWorker {
     pub fn spawn(self) -> Result<(), Box<dyn Error>> {
-        thread::spawn(move || {
-            let CVWorker { mut model, slot, shared, core } = self;
+        // Snapshot *this* session's flag: an immediate stop→start restart
+        // replaces the core's flag, and looping on the core's current flag
+        // would let this (now stale) worker adopt the new session and park
+        // forever alongside its replacement.
+        let running = self.core.session_flag();
+        let handle_core = self.core.clone();
+
+        let handle = thread::spawn(move || {
+            let CVWorker {
+                mut model,
+                slot,
+                shared,
+                core,
+            } = self;
 
             // Block until a frame is published or the pipeline is stopped. No
             // polling: an idle pipeline parks here with zero wakeups, and a
             // stop wakes us with `None` so the loop exits.
-            while let Some(frame) = shared.wait(core.running_flag()) {
+            while let Some(frame) = shared.wait(&running) {
                 // ---------- Extract dimensions (borrow pixels directly) ----------
                 let (width, height) = (frame.0, frame.1);
 
                 // ---------- Inference ----------
-                let (output, time_metrics, posture_angle_deg) = match model.process_rgba(&frame.2.data, width, height)
-                {
-                    Ok(o) => o,
-                    Err(e) => {
-                        eprintln!("Inference error: {e}");
-                        continue;
-                    }
-                };
+                let (output, time_metrics, posture_angle_deg) =
+                    match model.process_rgba(&frame.2.data, width, height) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            eprintln!("Inference error: {e}");
+                            continue;
+                        }
+                    };
 
                 // ---------- Publish result ----------
                 // Not pooled: the overlay is freshly rendered each frame and
@@ -59,6 +71,7 @@ impl CVWorker {
                 *slot = Some(model);
             }
         });
+        handle_core.adopt_worker(handle);
 
         Ok(())
     }

@@ -1,9 +1,10 @@
 use std::{
     error::Error,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    thread::JoinHandle,
 };
 use tokio::sync::broadcast;
 
@@ -50,35 +51,77 @@ pub trait ManagedService {
 
 #[derive(Debug, Clone)]
 pub struct ServiceCore<T: Clone> {
-    running: Arc<AtomicBool>,
+    session: Arc<Mutex<Session>>,
     tx: broadcast::Sender<T>,
+}
+
+/// Per-session run state. The flag is a *fresh* `Arc<AtomicBool>` for every
+/// session (see `claim_running`): a worker snapshots its own session's flag at
+/// spawn and loops on that, never on the core's current flag. This is what
+/// makes an immediate stop→start restart safe — the old worker's flag stays
+/// false forever even though the service as a whole is running again, so the
+/// old thread always exits instead of adopting the new session (previously
+/// every camera/resolution switch leaked the old capture thread, which never
+/// observed the stop; see issue_writeups/worker_thread_leak_on_restart.md).
+#[derive(Debug)]
+struct Session {
+    running: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl<T: Clone> ServiceCore<T> {
     pub fn new(buffer: usize) -> Self {
         let (tx, _) = broadcast::channel(buffer);
         Self {
-            running: Arc::new(AtomicBool::new(false)),
+            session: Arc::new(Mutex::new(Session {
+                running: Arc::new(AtomicBool::new(false)),
+                worker: None,
+            })),
             tx,
         }
     }
 
+    /// Claim the running flag for a new session. Replaces the session flag with
+    /// a fresh one so any straggling worker from a previous session (still
+    /// holding the old flag) can never mistake the new session for its own.
     pub fn claim_running(&self) -> bool {
-        self.running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
+        let mut session = self.session.lock().unwrap();
+        if session.running.load(Ordering::SeqCst) {
+            return false;
+        }
+        session.running = Arc::new(AtomicBool::new(true));
+        true
     }
 
     pub fn mark_running(&self, running: bool) {
-        self.running.store(running, Ordering::SeqCst);
+        self.session
+            .lock()
+            .unwrap()
+            .running
+            .store(running, Ordering::SeqCst);
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.session.lock().unwrap().running.load(Ordering::SeqCst)
     }
 
-    pub fn running_flag(&self) -> &AtomicBool {
-        &self.running
+    /// The current session's run flag. Workers capture this once at spawn and
+    /// loop on it; they must not call `is_running`, which reads whatever
+    /// session is current at the time.
+    pub fn session_flag(&self) -> Arc<AtomicBool> {
+        self.session.lock().unwrap().running.clone()
+    }
+
+    /// Record the just-spawned worker's handle so the next session can join it.
+    pub fn adopt_worker(&self, handle: JoinHandle<()>) {
+        self.session.lock().unwrap().worker = Some(handle);
+    }
+
+    /// Take the previous session's worker handle (if any) so the caller can
+    /// join it before starting a replacement. The lock is released before any
+    /// join happens, so a draining worker can't deadlock against the core.
+    pub fn take_prev_worker(&self) -> Option<JoinHandle<()>> {
+        self.session.lock().unwrap().worker.take()
     }
 
     pub fn publish(&self, value: T) -> Result<usize, broadcast::error::SendError<T>> {
@@ -153,6 +196,36 @@ mod tests {
         svc.stop();
         // After stopping, the service can be started again.
         assert!(svc.start().is_ok());
+    }
+
+    #[test]
+    fn restart_does_not_rearm_previous_sessions_flag() {
+        // The thread-leak regression: a worker from session 1 still holds its
+        // session flag across stop→start (it was blocked in grab_frame). The
+        // restart must hand session 2 a *new* flag and leave session 1's flag
+        // false, so the old worker exits instead of adopting the new session.
+        let core = ServiceCore::<u32>::new(4);
+
+        assert!(core.claim_running());
+        let old_flag = core.session_flag();
+
+        core.mark_running(false); // stop()
+        assert!(core.claim_running()); // immediate start()
+
+        assert!(!old_flag.load(Ordering::SeqCst), "old worker must see stop");
+        assert!(core.is_running(), "new session is live");
+        // The new session's flag is a distinct object.
+        assert!(!Arc::ptr_eq(&old_flag, &core.session_flag()));
+    }
+
+    #[test]
+    fn adopted_worker_handle_is_taken_once() {
+        let core = ServiceCore::<u32>::new(4);
+        core.adopt_worker(std::thread::spawn(|| {}));
+
+        let prev = core.take_prev_worker().expect("handle was adopted");
+        prev.join().unwrap();
+        assert!(core.take_prev_worker().is_none());
     }
 
     #[test]
