@@ -207,6 +207,11 @@ pub struct App {
     pub available_cameras: Vec<crate::camera::CameraOption>,
     pub camera_prompt_open: bool,
 
+    /// Latest pipeline failure (camera/model start or a mid-session camera
+    /// death), shown as a dismissible error in the status panel. Cleared on
+    /// dismiss or when a later start succeeds.
+    pub pipeline_error: Option<String>,
+
     /// Set when a text field (custom interval, alert cooldown) has accepted a
     /// keystroke whose value isn't on disk yet. Keystrokes only mutate
     /// in-memory state; the write is deferred to a commit point (Enter,
@@ -262,6 +267,10 @@ pub enum Message {
     CaptureResolutionSelected(crate::camera::CaptureResolution),
     CameraPromptConfirmed,
     RefreshCamerasPressed,
+    /// A worker thread reported a fatal failure (via the `PipelineErrors`
+    /// channel) — e.g. the camera failed to open or died mid-session.
+    PipelineFailed(String),
+    DismissPipelineError,
 }
 
 impl App {
@@ -318,6 +327,7 @@ impl App {
                 view: View::Dashboard,
                 available_cameras,
                 camera_prompt_open,
+                pipeline_error: None,
                 config_dirty: false,
                 config,
             },
@@ -393,6 +403,34 @@ impl App {
         }
     }
 
+    /// Surface a pipeline failure in the status panel's error display (and on
+    /// stderr for logs). It persists until dismissed or a later start succeeds.
+    fn report_pipeline_error(&mut self, message: String) {
+        eprintln!("{message}");
+        self.pipeline_error = Some(message);
+    }
+
+    /// Starts the camera and CV pipelines together, routing any failure into
+    /// the error display instead of panicking or swallowing it. On failure
+    /// nothing is left running (a camera that started before the model failed
+    /// is stopped again). Returns whether both started.
+    fn start_pipelines(&mut self) -> bool {
+        if let Err(e) = self.pipelines.camera_manager.start() {
+            self.report_pipeline_error(format!("Unable to start camera: {e}"));
+            return false;
+        }
+        if let Err(e) = self.pipelines.cv_manager.start() {
+            self.pipelines.camera_manager.stop();
+            self.report_pipeline_error(format!("Unable to start posture model: {e}"));
+            return false;
+        }
+        // A clean start supersedes any stale failure message. A failure inside
+        // the freshly spawned worker (device open happens on its thread) still
+        // arrives asynchronously via `Message::PipelineFailed`.
+        self.pipeline_error = None;
+        true
+    }
+
     /// Loads the inference model if it hasn't been loaded yet, recording the
     /// load time. Returns `false` if the model failed to load (the caller
     /// should bail out without starting the pipeline).
@@ -403,7 +441,7 @@ impl App {
                     self.model_load_time = Some(elapsed);
                 }
                 Err(e) => {
-                    eprintln!("Unable to load model: {e}");
+                    self.report_pipeline_error(format!("Unable to load posture model: {e}"));
                     return false;
                 }
             }
@@ -422,9 +460,10 @@ impl App {
         if self.sample_interval_secs().is_some() {
             self.pipelines.camera_manager.stop();
             self.pipelines.cv_manager.stop();
-        } else if !self.pipelines.camera_manager.is_running() {
-            self.pipelines.camera_manager.start().ok();
-            self.pipelines.cv_manager.start().ok();
+        } else if !self.pipelines.camera_manager.is_running() && !self.start_pipelines() {
+            // Don't pretend tracking started over a dead camera — the user
+            // would minimize the app and never receive an alert.
+            return false;
         }
 
         self.run_mode = RunMode::Background;
@@ -647,11 +686,8 @@ impl App {
                     return Task::none();
                 }
 
-                if let Err(e) = self.pipelines.camera_manager.start() {
-                    eprintln!("Unable to start camera: {e}");
-                }
-                if let Err(e) = self.pipelines.cv_manager.start() {
-                    eprintln!("Unable to start model: {e}");
+                if !self.pipelines.camera_manager.is_running() && !self.start_pipelines() {
+                    return Task::none();
                 }
                 self.posture_angle_deg = None;
                 self.bad_posture = false;
@@ -696,8 +732,7 @@ impl App {
                     match (was_continuous, is_continuous) {
                         (false, true) => {
                             if !self.pipelines.camera_manager.is_running() {
-                                self.pipelines.camera_manager.start().ok();
-                                self.pipelines.cv_manager.start().ok();
+                                self.start_pipelines();
                             }
                         }
                         (true, false) => {
@@ -751,9 +786,10 @@ impl App {
                 // close the alert. With manual dismissal we idle the camera until
                 // the user clicks.
                 let alert_blocks_sampling = self.alert_window_id.is_some() && self.force_dismiss;
-                if !alert_blocks_sampling && !self.pipelines.camera_manager.is_running() {
-                    self.pipelines.camera_manager.start().ok();
-                    self.pipelines.cv_manager.start().ok();
+                if !alert_blocks_sampling
+                    && !self.pipelines.camera_manager.is_running()
+                    && self.start_pipelines()
+                {
                     self.background_samples = Some(Vec::new());
                 }
                 Task::none()
@@ -869,8 +905,11 @@ impl App {
                 // to the newly chosen device.
                 if self.pipelines.camera_manager.is_running() {
                     self.pipelines.camera_manager.stop();
-                    if let Err(e) = self.pipelines.camera_manager.start() {
-                        eprintln!("Failed to restart camera: {e}");
+                    match self.pipelines.camera_manager.start() {
+                        Ok(()) => self.pipeline_error = None,
+                        Err(e) => {
+                            self.report_pipeline_error(format!("Failed to restart camera: {e}"));
+                        }
                     }
                 }
                 Task::none()
@@ -885,8 +924,11 @@ impl App {
                 // Restart a live session so the new cap takes effect immediately.
                 if self.pipelines.camera_manager.is_running() {
                     self.pipelines.camera_manager.stop();
-                    if let Err(e) = self.pipelines.camera_manager.start() {
-                        eprintln!("Failed to restart camera: {e}");
+                    match self.pipelines.camera_manager.start() {
+                        Ok(()) => self.pipeline_error = None,
+                        Err(e) => {
+                            self.report_pipeline_error(format!("Failed to restart camera: {e}"));
+                        }
                     }
                 }
                 Task::none()
@@ -895,6 +937,26 @@ impl App {
                 if self.config.camera.device.is_some() {
                     self.camera_prompt_open = false;
                 }
+                Task::none()
+            }
+            Message::PipelineFailed(message) => {
+                self.pipeline_error = Some(message);
+                // A camera worker flips its own running flag off before
+                // reporting a fatal failure. Bring the rest of the session in
+                // line: stop the CV worker (otherwise it parks on the frame
+                // channel forever) and stop claiming a live test. Background
+                // mode is left as-is so the interval tick keeps retrying —
+                // plugging the camera back in resumes tracking on its own.
+                if !self.pipelines.camera_manager.is_running() {
+                    self.pipelines.cv_manager.stop();
+                    if matches!(self.inference_state, InferenceState::Running) {
+                        self.inference_state = InferenceState::Stopped;
+                    }
+                }
+                Task::none()
+            }
+            Message::DismissPipelineError => {
+                self.pipeline_error = None;
                 Task::none()
             }
         }
@@ -1002,6 +1064,8 @@ impl App {
                 .map(Message::CamFrame),
             subscriptions::inference_subscription(self.pipelines.cv_manager.clone())
                 .map(Message::CvInference),
+            subscriptions::pipeline_error_subscription(&self.pipelines.errors)
+                .map(Message::PipelineFailed),
             window::close_requests().map(Message::WindowCloseRequested),
         ];
 

@@ -9,14 +9,21 @@ use std::time::Duration;
 use crate::SharedFrame;
 use crate::camera::{CaptureResolution, RgbaBuffer};
 use crate::config::CameraConfig;
-use crate::utils::ServiceCore;
+use crate::utils::{PipelineErrors, ServiceCore};
 
 use super::Frame;
+
+/// Give up after this many consecutive failed grabs. Transient hiccups (a
+/// dropped frame, a busy bus) reset the count on the next good frame; without
+/// a cap, a detached or wedged camera spins the retry loop forever while the
+/// UI keeps showing the last frame as if the feed were live.
+const MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
 pub struct CameraWorker {
     pub config: CameraConfig,
     pub core: ServiceCore<Frame>,
     pub shared: SharedFrame,
+    pub errors: PipelineErrors,
 }
 
 impl CameraWorker {
@@ -44,8 +51,13 @@ impl CameraWorker {
             if let Some(prev) = prev {
                 let _ = prev.join();
             }
+            let errors = self.errors.clone();
             if let Err(e) = self.run(&running) {
-                eprintln!("Camera worker failed to start: {e}");
+                errors.report(format!(
+                    "Camera error: {e}. Check that the camera is connected, not in \
+                     use by another app, and that camera permission is granted — or \
+                     pick a different camera in Settings."
+                ));
                 // Reflect reality so the UI stops reporting a live camera and a
                 // later start can claim a new session.
                 running.store(false, Ordering::SeqCst);
@@ -100,7 +112,21 @@ impl CameraWorker {
 
         let pool: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
+        // Track failed grabs so a camera that stops delivering (unplugged
+        // mid-session, reclaimed by the OS) ends the session with an error
+        // instead of retrying forever behind a frozen feed.
+        let mut consecutive_failures: u32 = 0;
+        let mut last_failure = String::new();
+
         while running.load(Ordering::SeqCst) {
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                self.shared.wake();
+                return Err(format!(
+                    "capture failed {MAX_CONSECUTIVE_FAILURES} times in a row ({last_failure})"
+                )
+                .into());
+            }
+
             match camera.grab_frame(3000) {
                 Ok(Some(frame)) => {
                     // Trust the frame's *own* reported geometry rather than the
@@ -115,15 +141,20 @@ impl CameraWorker {
                         Ok(info) => info,
                         Err(e) => {
                             eprintln!("Failed to read frame info: {e}");
+                            last_failure = format!("failed to read frame info: {e}");
+                            consecutive_failures += 1;
                             thread::sleep(Duration::from_millis(100));
                             continue;
                         }
                     };
                     let Some(src) = info.data_planes[0] else {
                         eprintln!("Captured frame had no data plane");
+                        last_failure = "captured frame had no data plane".to_string();
+                        consecutive_failures += 1;
                         thread::sleep(Duration::from_millis(100));
                         continue;
                     };
+                    consecutive_failures = 0;
                     let width = info.width;
                     let height = info.height;
                     let src_stride = info.strides[0] as usize;
@@ -180,10 +211,14 @@ impl CameraWorker {
                 }
                 Ok(None) => {
                     eprintln!("Unable to capture frame");
+                    last_failure = "no frame arrived within the grab timeout".to_string();
+                    consecutive_failures += 1;
                     thread::sleep(Duration::from_millis(100));
                 }
                 Err(e) => {
                     eprintln!("Camera capture failed: {}", e);
+                    last_failure = format!("capture failed: {e}");
+                    consecutive_failures += 1;
                     thread::sleep(Duration::from_millis(100));
                 }
             }
