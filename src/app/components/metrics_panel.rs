@@ -4,6 +4,7 @@ use iced::border::Border;
 use iced::widget::{button, column, container, progress_bar, row, scrollable, stack, text, Space};
 use iced::{Alignment, Background, Color, Element, Length, Padding};
 
+use crate::app::components::fill_viewport::fill_viewport;
 use crate::app::components::slide::slide;
 use crate::app::components::ui;
 use crate::app::theme::{ELEV, GREEN, HOVER, LINE, PANEL, RED, T1};
@@ -139,7 +140,12 @@ fn view_body(app: &App) -> Element<'_, Message> {
     // Windows display scaling — the body's share of the height drops below the
     // cards' natural height. Clipping there slices the bottom card's value; a
     // scrollable degrades gracefully instead and keeps every value reachable.
-    scrollable(slide(current, previous, progress, direction))
+    //
+    // The `fill_viewport` wrapper is load-bearing: the scrollable lays its
+    // content out with compressed (unbounded) height, which collapses every
+    // `Fill` height inside — the cards' accent stripes vanish and the layout
+    // packs to the top instead of spreading across the body.
+    scrollable(fill_viewport(slide(current, previous, progress, direction)))
         .width(Length::Fill)
         .height(Length::Fill)
         .direction(scrollable::Direction::Vertical(
