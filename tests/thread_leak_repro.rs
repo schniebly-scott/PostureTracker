@@ -10,7 +10,7 @@ use std::time::Duration;
 use posturetracker::camera::CameraManager;
 use posturetracker::config::CameraConfig;
 use posturetracker::frame_channel::FrameChannel;
-use posturetracker::utils::ManagedService;
+use posturetracker::utils::{ManagedService, PipelineErrors};
 
 fn thread_count() -> usize {
     std::fs::read_to_string("/proc/self/status")
@@ -32,7 +32,7 @@ fn camera_restart_does_not_leak_threads() {
         capture_width: 640,
         capture_height: 480,
     };
-    let manager = CameraManager::new(config, shared);
+    let manager = CameraManager::new(config, shared, PipelineErrors::new());
 
     manager.start().expect("first start");
     // Let the first session open the device and begin grabbing frames.

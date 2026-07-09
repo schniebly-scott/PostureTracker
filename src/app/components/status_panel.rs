@@ -30,6 +30,11 @@ impl BadgeKind {
 /// State of the live-status badge and its matching explanatory sentence.
 fn live_status(app: &App) -> (BadgeKind, &'static str, String) {
     let active = app.is_camera_running() || app.is_background_mode();
+    if let Some(error) = &app.pipeline_error {
+        // A pipeline failure outranks every other status: whatever the badge
+        // would otherwise claim, tracking isn't happening.
+        return (BadgeKind::Bad, "Tracking error", error.clone());
+    }
     if app.posture_baseline_deg.is_none() {
         (
             BadgeKind::Neutral,
@@ -274,9 +279,25 @@ pub fn view(app: &App) -> Element<'_, Message> {
 pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
     let (kind, label, status_line) = live_status(app);
 
+    // When a pipeline error is displayed, pair the badge with a dismiss
+    // button so the banner doesn't outlive its usefulness.
+    let badge: Element<'_, Message> = if app.pipeline_error.is_some() {
+        row![
+            state_badge(label, kind),
+            ui::ghost_button(text("Dismiss").size(13).into())
+                .padding([7, 13])
+                .on_press(Message::DismissPipelineError),
+        ]
+        .spacing(9)
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        state_badge(label, kind)
+    };
+
     let left = column![
         ui::micro_label("Live status"),
-        state_badge(label, kind),
+        badge,
         text(status_line).size(14).color(T2),
         threshold_field(app),
         interval_field(app),

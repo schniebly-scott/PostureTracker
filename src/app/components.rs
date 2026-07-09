@@ -2,6 +2,7 @@ pub mod alert_overlay;
 pub mod camera_panel;
 pub mod control_panel;
 pub mod debug_stats;
+pub mod fill_viewport;
 pub mod metrics_panel;
 pub mod settings_panel;
 pub mod slide;

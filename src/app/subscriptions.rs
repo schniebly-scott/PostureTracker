@@ -6,12 +6,12 @@ use iced::advanced::subscription::Hasher;
 use iced::futures::stream;
 use iced::widget::image;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::app::InferenceUpdate;
 use crate::camera::RgbaBuffer;
 use crate::cv::Inference;
-use crate::utils::ManagedService;
+use crate::utils::{ManagedService, PipelineErrors};
 use crate::{camera::CameraManager, cv::CVManager};
 use crate::Frame;
 
@@ -83,6 +83,54 @@ impl iced_subscription::Recipe for CameraSubscription {
                     // drains the channel more slowly.
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        };
+        Box::pin(s)
+    }
+}
+
+/* ============================
+Pipeline Error Subscription
+============================ */
+
+/// Streams worker-thread failure reports into the update loop so pipeline
+/// errors surface in the UI instead of dying on stderr.
+pub fn pipeline_error_subscription(errors: &PipelineErrors) -> Subscription<String> {
+    iced_subscription::from_recipe(PipelineErrorSubscription {
+        rx: errors.subscribe(),
+        service_id: errors.id(),
+    })
+}
+
+struct PipelineErrorSubscription {
+    rx: watch::Receiver<Option<String>>,
+    service_id: usize,
+}
+
+impl iced_subscription::Recipe for PipelineErrorSubscription {
+    type Output = String;
+
+    fn hash(&self, state: &mut Hasher) {
+        use std::hash::Hash;
+        std::any::TypeId::of::<Self>().hash(state);
+        // Keep subscriptions from distinct error channels from deduplicating.
+        self.service_id.hash(state);
+    }
+
+    fn stream(
+        self: Box<Self>,
+        _input: stream::BoxStream<iced_subscription::Event>,
+    ) -> stream::BoxStream<Self::Output> {
+        let mut rx = self.rx;
+
+        let s = async_stream::stream! {
+            // `changed` skips the channel's initial empty slot, so only real
+            // reports are yielded; a closed channel ends the stream.
+            while rx.changed().await.is_ok() {
+                let message = rx.borrow_and_update().clone();
+                if let Some(message) = message {
+                    yield message;
                 }
             }
         };
