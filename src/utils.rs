@@ -6,7 +6,48 @@ use std::{
     },
     thread::JoinHandle,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
+
+/// Fan-in surface for pipeline failures. Worker threads (and the app itself)
+/// `report` a human-readable message; the UI subscribes and shows the latest
+/// one as a dismissible banner. A `watch` channel — not `broadcast` — because
+/// only the most recent failure matters and a report must never block or fail
+/// for a worker, even while no UI is listening yet.
+#[derive(Debug, Clone)]
+pub struct PipelineErrors {
+    tx: Arc<watch::Sender<Option<String>>>,
+}
+
+impl PipelineErrors {
+    pub fn new() -> Self {
+        let (tx, _rx) = watch::channel(None);
+        Self { tx: Arc::new(tx) }
+    }
+
+    /// Publish a failure for the UI banner, mirroring it to stderr so the
+    /// message isn't lost when nothing is subscribed.
+    pub fn report(&self, message: impl Into<String>) {
+        let message = message.into();
+        eprintln!("{message}");
+        let _ = self.tx.send(Some(message));
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Option<String>> {
+        self.tx.subscribe()
+    }
+
+    /// Stable identity for subscription hashing, so recipes built from
+    /// distinct channels don't deduplicate.
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.tx) as usize
+    }
+}
+
+impl Default for PipelineErrors {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub trait ManagedService {
     type Output: Clone;
@@ -226,6 +267,33 @@ mod tests {
         let prev = core.take_prev_worker().expect("handle was adopted");
         prev.join().unwrap();
         assert!(core.take_prev_worker().is_none());
+    }
+
+    #[test]
+    fn pipeline_errors_deliver_reports_to_subscribers() {
+        let errors = PipelineErrors::new();
+        let mut rx = errors.subscribe();
+
+        // The initial empty slot must not read as a pending failure.
+        assert!(!rx.has_changed().unwrap());
+
+        errors.report("camera exploded");
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(rx.borrow_and_update().as_deref(), Some("camera exploded"));
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn pipeline_errors_renotify_on_repeated_identical_failure() {
+        // A camera that fails the same way on every restart must re-raise the
+        // banner each time, not be deduplicated away by value equality.
+        let errors = PipelineErrors::new();
+        let mut rx = errors.subscribe();
+
+        errors.report("same error");
+        rx.borrow_and_update();
+        errors.report("same error");
+        assert!(rx.has_changed().unwrap());
     }
 
     #[test]

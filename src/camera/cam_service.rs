@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::SharedFrame;
 use crate::config::CameraConfig;
-use crate::utils::{ManagedService, ServiceCore};
+use crate::utils::{ManagedService, PipelineErrors, ServiceCore};
 
 use super::{Frame, cam_worker::CameraWorker};
 
@@ -42,14 +42,16 @@ pub struct CameraManager {
     config: Mutex<CameraConfig>,
     core: ServiceCore<Frame>,
     shared: SharedFrame,
+    errors: PipelineErrors,
 }
 
 impl CameraManager {
-    pub fn new(config: CameraConfig, shared: SharedFrame) -> Self {
+    pub fn new(config: CameraConfig, shared: SharedFrame, errors: PipelineErrors) -> Self {
         Self {
             config: Mutex::new(config),
             shared,
             core: ServiceCore::new(2),
+            errors,
         }
     }
 
@@ -80,6 +82,7 @@ impl ManagedService for CameraManager {
             config: self.config.lock().unwrap().clone(),
             core: self.core.clone(),
             shared: self.shared.clone(),
+            errors: self.errors.clone(),
         }
         .spawn()
     }
@@ -88,6 +91,55 @@ impl ManagedService for CameraManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    fn test_manager(device: Option<&str>) -> (Arc<CameraManager>, PipelineErrors) {
+        let errors = PipelineErrors::new();
+        let manager = Arc::new(CameraManager::new(
+            CameraConfig {
+                device: device.map(str::to_string),
+                capture_width: 640,
+                capture_height: 480,
+            },
+            Arc::new(crate::frame_channel::FrameChannel::new()),
+            errors.clone(),
+        ));
+        (manager, errors)
+    }
+
+    #[test]
+    fn start_without_device_fails_synchronously_and_stays_stopped() {
+        let (manager, _errors) = test_manager(None);
+        assert!(manager.start().is_err());
+        assert!(!manager.is_running(), "failed spawn must release the flag");
+    }
+
+    #[test]
+    fn failed_device_open_reports_error_and_clears_running() {
+        let (manager, errors) = test_manager(Some("/dev/video-does-not-exist"));
+        let mut rx = errors.subscribe();
+
+        manager
+            .start()
+            .expect("spawn succeeds; the open fails on the worker thread");
+
+        // The worker opens the device asynchronously; wait for it to fail and
+        // reflect reality instead of lying `is_running() == true` forever.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while manager.is_running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !manager.is_running(),
+            "a dead worker must not report a live camera"
+        );
+        assert!(
+            rx.has_changed().unwrap(),
+            "the failure must reach the UI error channel, not just stderr"
+        );
+        let message = rx.borrow_and_update().clone().unwrap();
+        assert!(message.contains("Camera error"), "got: {message}");
+    }
 
     #[test]
     fn pooled_buffer_returns_data_on_drop() {
