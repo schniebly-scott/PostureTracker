@@ -37,6 +37,32 @@ const DASHBOARD_DESIGN_HEIGHT: f32 = 900.0;
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
 
+/// Ties the running window to its installed Linux `.desktop` file; see the
+/// comment in [`run`]. Also used as the X11 `WM_CLASS`.
+const APP_ID: &str = "posturetracker";
+
+/// Source for [`window_icon`]. 256 px so it stays crisp on the HiDPI taskbars
+/// that ask for a 64–96 px icon; every window manager downsamples from this one
+/// image. The multi-resolution `.ico`/`.icns` next to it are what the OS shells
+/// read (see `build.rs` and the `.app` bundle step of the release workflow).
+const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icons/app/app-icon-256.png");
+
+/// The icon the window itself carries: Windows title bar + taskbar, and the
+/// Linux taskbar/dock. macOS ignores it — there the Dock and Finder both read
+/// `CFBundleIconFile` from the `.app` bundle, so this is a no-op on that
+/// platform rather than an alternative to bundling the `.icns`.
+///
+/// A malformed icon is not worth refusing to launch over, so a decode failure
+/// just leaves the window with the OS default.
+fn window_icon() -> Option<window::Icon> {
+    let icon = ::image::load_from_memory_with_format(APP_ICON_PNG, ::image::ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let (width, height) = icon.dimensions();
+
+    window::icon::from_rgba(icon.into_raw(), width, height).ok()
+}
+
 #[derive(PartialEq)]
 enum InferenceState {
     Unloaded,
@@ -137,6 +163,15 @@ pub fn run() -> iced::Result {
         App::update,
         App::view,
     )
+    // Wayland reads this back as the surface's app_id and X11 as WM_CLASS, which
+    // is how a Linux desktop matches the running window to its installed
+    // `.desktop` file (and therefore to its icon). It must stay equal to the
+    // basename of `packaging/linux/posturetracker.desktop`. Applied before the
+    // font builders below, since `settings` replaces the whole struct.
+    .settings(iced::Settings {
+        id: Some(APP_ID.to_string()),
+        ..iced::Settings::default()
+    })
     .title(App::title)
     .subscription(App::subscription)
     .theme(App::theme)
@@ -1108,6 +1143,7 @@ impl App {
 
     fn main_window_settings() -> window::Settings {
         window::Settings {
+            icon: window_icon(),
             size: MAIN_WINDOW_SIZE,
             // Resizable + a guaranteed floor so the dashboard fits—and stays
             // usable—on small or scaled screens. The main window is the
@@ -1124,6 +1160,7 @@ impl App {
 
     fn debug_window_settings() -> window::Settings {
         window::Settings {
+            icon: window_icon(),
             size: DEBUG_WINDOW_SIZE,
             resizable: false,
             position: window::Position::Centered,
@@ -1227,6 +1264,14 @@ mod tests {
         assert_eq!(MetricsCategory::Session.label(), "This Session");
         assert_eq!(MetricsCategory::AllTime.label(), "All Time");
         assert_eq!(MetricsCategory::QuickView.label(), "Quick View");
+    }
+
+    /// `window_icon` swallows a decode failure, so without this a corrupted
+    /// asset would silently ship as "no icon" rather than fail the build.
+    #[test]
+    fn window_icon_decodes_and_is_carried_by_the_main_window() {
+        assert!(window_icon().is_some());
+        assert!(App::main_window_settings().icon.is_some());
     }
 
     #[test]

@@ -2,6 +2,7 @@
 name = "posturetracker"
 version = "0.5.2"
 edition = "2024"
+description = "Watches your posture through the webcam and alerts you when you slouch"
 
 [dependencies]
 iced = { version = "0.14", features = [
@@ -27,5 +28,40 @@ dirs = "5"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.31"
+
 [dev-dependencies]
 tempfile = "3"
+
+# Desktop entry + hicolor icons, which is what makes the icon show up in the
+# applications menu, the dock and the file manager. Without the `assets` list a
+# `cargo deb` ships the bare binary. `Icon=posturetracker` in the .desktop file
+# resolves against the installed basenames below, so they all have to be named
+# `posturetracker`, not `app-icon`.
+#
+# cargo-deb rewrites a leading `target/release/` to the `--target` triple's
+# directory, so this stays correct for the cross-compiled release build.
+[package.metadata.deb]
+section = "utils"
+priority = "optional"
+# The tray is optional at runtime — `app::tray` probes for the appindicator
+# library and degrades to a tray-less app when it is missing, so this is a
+# Recommends (pulled in by default, removable) rather than a Depends.
+recommends = "libayatana-appindicator3-1"
+assets = [
+    ["target/release/posturetracker", "usr/bin/", "755"],
+    # Supplying `assets` replaces cargo-deb's defaults, which had been shipping
+    # the README on their own.
+    ["README.md", "usr/share/doc/posturetracker/README.md", "644"],
+    ["packaging/linux/posturetracker.desktop", "usr/share/applications/", "644"],
+    ["assets/icons/app/app-icon-16.png", "usr/share/icons/hicolor/16x16/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-24.png", "usr/share/icons/hicolor/24x24/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-32.png", "usr/share/icons/hicolor/32x32/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-48.png", "usr/share/icons/hicolor/48x48/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-64.png", "usr/share/icons/hicolor/64x64/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-128.png", "usr/share/icons/hicolor/128x128/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-256.png", "usr/share/icons/hicolor/256x256/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon-512.png", "usr/share/icons/hicolor/512x512/apps/posturetracker.png", "644"],
+    ["assets/icons/app/app-icon.svg", "usr/share/icons/hicolor/scalable/apps/posturetracker.svg", "644"],
+]

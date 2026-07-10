@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Posture Tracker
+GenericName=Posture Monitor
+Comment=Watches your posture through the webcam and alerts you when you slouch
+Exec=posturetracker
+Icon=posturetracker
+Terminal=false
+Categories=Utility;
+Keywords=posture;webcam;ergonomics;health;
+# Wayland compositors match a window to this file by its app_id, X11 window
+# managers by WM_CLASS. iced sets both from `Settings::id`, which `app::run`
+# sets to `posturetracker` — the basename of this file. Keep the three in sync
+# or the running window falls back to a generic icon in the dock.
+StartupWMClass=posturetracker

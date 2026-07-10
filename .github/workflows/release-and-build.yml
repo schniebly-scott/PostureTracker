@@ -307,6 +307,9 @@ jobs:
           mkdir -p "$APP_DIR/Contents/MacOS"
           mkdir -p "$APP_DIR/Contents/Resources"
           cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }} "$APP_DIR/Contents/MacOS/"
+          # The Dock and Finder both read the bundle icon named by CFBundleIconFile below;
+          # macOS ignores the per-window icon the app sets at runtime.
+          cp assets/icons/app/app-icon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
           # Intel build links libonnxruntime.dylib dynamically, so ship it inside the bundle and
           # repoint the executable at @rpath/@executable_path so dyld finds it next to the binary.
           if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
@@ -335,6 +338,10 @@ jobs:
               <string>com.example.${{ env.BIN_NAME }}</string>
               <key>CFBundleName</key>
               <string>${{ env.APP_NAME }}</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleIconName</key>
+              <string>AppIcon</string>
               <key>CFBundleVersion</key>
               <string>${{ needs.version-check.outputs.version }}</string>
               <key>CFBundlePackageType</key>
