@@ -4,6 +4,7 @@ use iced::{Alignment, Background, Color, Element, Length, Length::Fill};
 
 use crate::app::components::debug_stats;
 use crate::app::components::ui;
+use crate::app::components::ui::Scale;
 use crate::app::theme::{ELEV, GREEN, LINE, PANEL, RED, T1, T2, T3};
 use crate::app::{App, Message, SampleIntervalChoice};
 use crate::metrics::HISTORY_SECS;
@@ -71,7 +72,7 @@ fn live_status(app: &App) -> (BadgeKind, &'static str, String) {
     }
 }
 
-fn state_badge<'a>(label: &'a str, kind: BadgeKind) -> Element<'a, Message> {
+fn state_badge<'a>(label: &'a str, kind: BadgeKind, scale: Scale) -> Element<'a, Message> {
     let color = kind.color();
     let (bg, border, text_color) = match kind {
         BadgeKind::Neutral => (ELEV, LINE, T2),
@@ -82,18 +83,26 @@ fn state_badge<'a>(label: &'a str, kind: BadgeKind) -> Element<'a, Message> {
         ),
     };
 
-    let dot = container(Space::new().width(9).height(9)).style(move |_| container::Style {
-        background: Some(Background::Color(color)),
-        border: Border::default().rounded(5),
-        ..Default::default()
-    });
+    let dot = container(Space::new().width(scale.px(9.0)).height(scale.px(9.0))).style(
+        move |_| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border::default().rounded(5),
+            ..Default::default()
+        },
+    );
 
     container(
-        row![dot, text(label).size(13).font(ui::semibold()).color(text_color)]
-            .spacing(9)
-            .align_y(Alignment::Center),
+        row![
+            dot,
+            text(label)
+                .size(scale.text(13.0))
+                .font(ui::semibold())
+                .color(text_color)
+        ]
+        .spacing(scale.px(9.0))
+        .align_y(Alignment::Center),
     )
-    .padding([7, 13])
+    .padding(scale.pad(7.0, 13.0))
     .style(move |_| container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
@@ -107,14 +116,21 @@ fn state_badge<'a>(label: &'a str, kind: BadgeKind) -> Element<'a, Message> {
 }
 
 /// Custom-track slider: green fill (red when bad), white knob, value read-out.
-fn threshold_field(app: &App) -> Element<'_, Message> {
+fn threshold_field(app: &App, scale: Scale) -> Element<'_, Message> {
     let bad = app.bad_posture;
     let accent = if bad { RED } else { GREEN };
 
     let head = row![
-        text("Angle threshold").size(16).font(ui::semibold()).color(T2),
+        text("Angle threshold")
+            .size(scale.text(16.0))
+            .font(ui::semibold())
+            .color(T2),
         Space::new().width(Fill),
-        ui::value(format!("{:.1}\u{00B0}", app.posture_threshold_deg), 13, T1),
+        ui::value(
+            format!("{:.1}\u{00B0}", app.posture_threshold_deg),
+            scale.text(13.0),
+            T1,
+        ),
     ]
     .align_y(Alignment::Center);
 
@@ -132,7 +148,7 @@ fn threshold_field(app: &App) -> Element<'_, Message> {
                 Background::Color(accent),
                 Background::Color(ELEV),
             ),
-            width: 6.0,
+            width: scale.px(6.0),
             border: Border {
                 color: LINE,
                 width: 1.0,
@@ -140,17 +156,19 @@ fn threshold_field(app: &App) -> Element<'_, Message> {
             },
         },
         handle: slider::Handle {
-            shape: slider::HandleShape::Circle { radius: 9.0 },
+            shape: slider::HandleShape::Circle {
+                radius: scale.px(9.0),
+            },
             background: Background::Color(Color::WHITE),
             border_width: 0.0,
             border_color: Color::TRANSPARENT,
         },
     });
 
-    column![head, track].spacing(9).into()
+    column![head, track].spacing(scale.px(9.0)).into()
 }
 
-fn interval_field(app: &App) -> Element<'_, Message> {
+fn interval_field(app: &App, scale: Scale) -> Element<'_, Message> {
     let sel = app.sample_interval_choice;
     let opts = [
         ("Constant", SampleIntervalChoice::Constant),
@@ -160,17 +178,18 @@ fn interval_field(app: &App) -> Element<'_, Message> {
         ("Custom", SampleIntervalChoice::Custom),
     ];
 
-    let mut seg = row![].spacing(2);
+    let mut seg = row![].spacing(scale.px(2.0));
     for (label, choice) in opts {
         seg = seg.push(ui::seg_button(
             label,
             sel == choice,
             Message::SampleIntervalChoiceChanged(choice),
+            scale,
         ));
     }
 
     let seg = container(seg)
-        .padding(3)
+        .padding(scale.pad_all(3.0))
         .style(|_| container::Style {
             background: Some(Background::Color(ELEV)),
             border: Border {
@@ -182,10 +201,13 @@ fn interval_field(app: &App) -> Element<'_, Message> {
         });
 
     let mut col = column![
-        text("Check interval").size(16).font(ui::semibold()).color(T2),
+        text("Check interval")
+            .size(scale.text(16.0))
+            .font(ui::semibold())
+            .color(T2),
         seg,
     ]
-    .spacing(9);
+    .spacing(scale.px(9.0));
 
     if sel == SampleIntervalChoice::Custom {
         col = col.push(
@@ -193,10 +215,11 @@ fn interval_field(app: &App) -> Element<'_, Message> {
                 text_input("min", &app.custom_interval_input)
                     .on_input(Message::CustomIntervalInputChanged)
                     .on_submit(Message::CommitConfig)
-                    .width(70),
-                text("minutes").size(12).color(T3),
+                    .size(scale.text(16.0))
+                    .width(scale.px(70.0)),
+                text("minutes").size(scale.text(12.0)).color(T3),
             ]
-            .spacing(8)
+            .spacing(scale.px(8.0))
             .align_y(Alignment::Center),
         );
     }
@@ -204,56 +227,65 @@ fn interval_field(app: &App) -> Element<'_, Message> {
     col.into()
 }
 
-fn dismiss_toggle(app: &App) -> Element<'_, Message> {
+fn dismiss_toggle(app: &App, scale: Scale) -> Element<'_, Message> {
     let copy = column![
-        text("Require manual dismissal").size(16).font(ui::semibold()).color(T2),
-        text("Alerts stay until you acknowledge them").size(13).color(T3),
+        text("Require manual dismissal")
+            .size(scale.text(16.0))
+            .font(ui::semibold())
+            .color(T2),
+        text("Alerts stay until you acknowledge them")
+            .size(scale.text(13.0))
+            .color(T3),
     ]
-    .spacing(2);
+    .spacing(scale.px(2.0));
 
     row![
         copy,
         Space::new().width(Fill),
-        toggler(app.force_dismiss).on_toggle(Message::ForceDismissToggled),
+        toggler(app.force_dismiss)
+            .size(scale.px(16.0))
+            .on_toggle(Message::ForceDismissToggled),
     ]
     .align_y(Alignment::Center)
     .into()
 }
 
-fn graph_card(app: &App) -> Element<'_, Message> {
+fn graph_card(app: &App, scale: Scale) -> Element<'_, Message> {
     let history_label = format!(
         "HEAD-TO-SHOULDER ANGLE \u{00B7} LAST {:.0} MIN",
         HISTORY_SECS / 60.0
     );
-    let legend = |color: Color, label: &'static str| {
+    let legend = move |color: Color, label: &'static str| {
         row![
-            container(Space::new().width(14).height(3)).style(move |_| container::Style {
-                background: Some(Background::Color(color)),
-                border: Border::default().rounded(2),
-                ..Default::default()
-            }),
-            text(label).size(16).color(T3),
+            container(Space::new().width(scale.px(14.0)).height(scale.px(3.0))).style(
+                move |_| container::Style {
+                    background: Some(Background::Color(color)),
+                    border: Border::default().rounded(2),
+                    ..Default::default()
+                }
+            ),
+            text(label).size(scale.text(16.0)).color(T3),
         ]
-        .spacing(6)
+        .spacing(scale.px(6.0))
         .align_y(Alignment::Center)
     };
 
     let head = row![
         text(history_label)
-            .size(14)
+            .size(scale.text(14.0))
             .font(ui::semibold())
             .color(T3),
         Space::new().width(Fill),
         legend(GREEN, "Angle"),
         legend(RED, "Threshold"),
     ]
-    .spacing(14)
+    .spacing(scale.px(14.0))
     .align_y(Alignment::Center);
 
     let chart: Element<_> = if app.metrics.angle_history.is_empty() {
         container(
             text("No data — start a session to graph your posture")
-                .size(18)
+                .size(scale.text(18.0))
                 .color(T3),
         )
         .center_x(Fill)
@@ -263,8 +295,8 @@ fn graph_card(app: &App) -> Element<'_, Message> {
         debug_stats::angle_chart(app, Length::Fill)
     };
 
-    container(column![head, chart].spacing(8).height(Fill))
-        .padding([14, 16])
+    container(column![head, chart].spacing(scale.px(8.0)).height(Fill))
+        .padding(scale.pad(14.0, 16.0))
         // Larger share than the controls column (FillPortion(2)) to its left.
         .width(Length::FillPortion(3))
         .height(Fill)
@@ -272,57 +304,55 @@ fn graph_card(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-pub fn view(app: &App) -> Element<'_, Message> {
-    view_with_height(app, Length::FillPortion(5))
-}
-
-pub fn view_with_height(app: &App, height: Length) -> Element<'_, Message> {
+pub fn view(app: &App, scale: Scale) -> Element<'_, Message> {
     let (kind, label, status_line) = live_status(app);
 
     // When a pipeline error is displayed, pair the badge with a dismiss
     // button so the banner doesn't outlive its usefulness.
     let badge: Element<'_, Message> = if app.pipeline_error.is_some() {
         row![
-            state_badge(label, kind),
-            ui::ghost_button(text("Dismiss").size(13).into())
-                .padding([7, 13])
+            state_badge(label, kind, scale),
+            ui::ghost_button(text("Dismiss").size(scale.text(13.0)).into(), scale)
+                .padding(scale.pad(7.0, 13.0))
                 .on_press(Message::DismissPipelineError),
         ]
-        .spacing(9)
+        .spacing(scale.px(9.0))
         .align_y(Alignment::Center)
         .into()
     } else {
-        state_badge(label, kind)
+        state_badge(label, kind, scale)
     };
 
     let left = column![
-        ui::micro_label("Live status"),
+        ui::micro_label("Live status", scale),
         badge,
-        text(status_line).size(14).color(T2),
-        threshold_field(app),
-        interval_field(app),
-        dismiss_toggle(app),
+        text(status_line).size(scale.text(14.0)).color(T2),
+        threshold_field(app, scale),
+        interval_field(app, scale),
+        dismiss_toggle(app, scale),
     ]
-    .spacing(16)
+    .spacing(scale.px(16.0))
     // Fixed width so the status controls keep a stable, readable size; the
     // graph card to its right is the row's only fill child, so it absorbs the
     // extra width. (A `max_width` on a FillPortion child is a no-op here:
     // iced's flex layout pins a fill main-axis child to min == max == its
     // portion, so the cap is clamped away.)
-    .width(Length::Fixed(366.0));
+    .width(Length::Fixed(scale.px(366.0)));
 
-    let body = row![left, graph_card(app)]
-        .spacing(22)
+    let body = row![left, graph_card(app, scale)]
+        .spacing(scale.px(22.0))
         .height(Fill);
 
     container(body)
         .style(ui::panel_alert_style(app.bad_posture))
-        .padding(16)
+        .padding(scale.pad_all(16.0))
         // Width is the cross axis of the dashboard's vertical column here, so
         // (unlike a row's main axis) `max_width` is honored: the panel fills
         // the width up to this cap, then stops stretching on wide displays.
         .width(Fill)
         .max_width(STATUS_PANEL_MAX_WIDTH)
-        .height(height)
+        // Takes the smaller share of the dashboard column; the top row above
+        // is FillPortion(7).
+        .height(Length::FillPortion(5))
         .into()
 }

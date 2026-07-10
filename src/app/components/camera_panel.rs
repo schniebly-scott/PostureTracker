@@ -3,16 +3,18 @@ use iced::widget::{column, container, image, row, stack, text, Space};
 use iced::{Alignment, Background, Color, ContentFit, Element, Length, Length::Fill};
 
 use crate::app::components::ui;
+use crate::app::components::ui::Scale;
 use crate::app::theme::{ELEV, GREEN, LINE, RED, SCRIM, T2, T3, VIDEO_BG};
 use crate::app::{App, Message};
 
 /// Purposeful empty state: icon, copy, and a calibration tip — not a lone box.
-fn idle_card<'a>() -> Element<'a, Message> {
-    let icon = container(ui::icon(ui::glyph::CAMERA, 26).color(T3))
-        .width(56)
-        .height(56)
-        .center_x(56)
-        .center_y(56)
+fn idle_card<'a>(scale: Scale) -> Element<'a, Message> {
+    let box_side = scale.px(56.0);
+    let icon = container(ui::icon(ui::glyph::CAMERA, scale.px(26.0)).color(T3))
+        .width(box_side)
+        .height(box_side)
+        .center_x(box_side)
+        .center_y(box_side)
         .style(|_| container::Style {
             background: Some(Background::Color(ELEV)),
             border: Border {
@@ -25,13 +27,15 @@ fn idle_card<'a>() -> Element<'a, Message> {
 
     let tip = container(
         row![
-            ui::icon(ui::glyph::TARGET, 16).color(T3),
-            text("Sit upright before calibrating").size(15).color(T3),
+            ui::icon(ui::glyph::TARGET, scale.px(16.0)).color(T3),
+            text("Sit upright before calibrating")
+                .size(scale.text(15.0))
+                .color(T3),
         ]
-        .spacing(6)
+        .spacing(scale.px(6.0))
         .align_y(Alignment::Center),
     )
-    .padding([6, 11])
+    .padding(scale.pad(6.0, 11.0))
     .style(|_| container::Style {
         background: Some(Background::Color(ELEV)),
         border: Border {
@@ -45,17 +49,20 @@ fn idle_card<'a>() -> Element<'a, Message> {
     container(
         column![
             icon,
-            text("Camera idle").size(20).font(ui::semibold()).color(T2),
+            text("Camera idle")
+                .size(scale.text(20.0))
+                .font(ui::semibold())
+                .color(T2),
             container(
                 text("Start a session to begin tracking your head and shoulder alignment.")
-                    .size(15)
+                    .size(scale.text(15.0))
                     .color(T3)
                     .align_x(Alignment::Center),
             )
-            .max_width(240),
+            .max_width(scale.px(240.0)),
             tip,
         ]
-        .spacing(14)
+        .spacing(scale.px(14.0))
         .align_x(Alignment::Center),
     )
     .center_x(Fill)
@@ -64,7 +71,7 @@ fn idle_card<'a>() -> Element<'a, Message> {
 }
 
 /// A floating chip showing the live head-to-shoulder-angle deviation from baseline.
-fn angle_chip<'a>(app: &App) -> Element<'a, Message> {
+fn angle_chip<'a>(app: &App, scale: Scale) -> Element<'a, Message> {
     let (label, color) = match (app.posture_baseline_deg, app.posture_angle_deg) {
         (Some(b), Some(a)) => (
             format!("{:.1}\u{00B0}", (a - b).abs()),
@@ -76,13 +83,16 @@ fn angle_chip<'a>(app: &App) -> Element<'a, Message> {
 
     container(
         row![
-            text("HEAD-TO-SHOULDER ANGLE").size(10).font(ui::semibold()).color(T3),
-            ui::value(label, 18, color).font(ui::mono()),
+            text("HEAD-TO-SHOULDER ANGLE")
+                .size(scale.text(10.0))
+                .font(ui::semibold())
+                .color(T3),
+            ui::value(label, scale.text(18.0), color).font(ui::mono()),
         ]
-        .spacing(9)
+        .spacing(scale.px(9.0))
         .align_y(Alignment::Center),
     )
-    .padding([8, 12])
+    .padding(scale.pad(8.0, 12.0))
     .style(|_| container::Style {
         background: Some(Background::Color(SCRIM)),
         border: Border {
@@ -96,7 +106,7 @@ fn angle_chip<'a>(app: &App) -> Element<'a, Message> {
 }
 
 /// "TRACKING" / "TESTING" pill in the top-right of an active feed.
-fn rec_chip<'a>(app: &App) -> Element<'a, Message> {
+fn rec_chip<'a>(app: &App, scale: Scale) -> Element<'a, Message> {
     let label = if app.is_background_mode() {
         "TRACKING"
     } else {
@@ -104,18 +114,26 @@ fn rec_chip<'a>(app: &App) -> Element<'a, Message> {
     };
     let dot_color = if app.bad_posture { RED } else { GREEN };
 
-    let dot = container(Space::new().width(8).height(8)).style(move |_| container::Style {
-        background: Some(Background::Color(dot_color)),
-        border: Border::default().rounded(4),
-        ..Default::default()
-    });
+    let dot = container(Space::new().width(scale.px(8.0)).height(scale.px(8.0))).style(
+        move |_| container::Style {
+            background: Some(Background::Color(dot_color)),
+            border: Border::default().rounded(4),
+            ..Default::default()
+        },
+    );
 
     container(
-        row![dot, text(label).size(13).font(ui::semibold()).color(T2)]
-            .spacing(7)
-            .align_y(Alignment::Center),
+        row![
+            dot,
+            text(label)
+                .size(scale.text(13.0))
+                .font(ui::semibold())
+                .color(T2)
+        ]
+        .spacing(scale.px(7.0))
+        .align_y(Alignment::Center),
     )
-    .padding([7, 11])
+    .padding(scale.pad(7.0, 11.0))
     .style(|_| container::Style {
         background: Some(Background::Color(SCRIM)),
         border: Border {
@@ -128,7 +146,7 @@ fn rec_chip<'a>(app: &App) -> Element<'a, Message> {
     .into()
 }
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &App, scale: Scale) -> Element<'_, Message> {
     let video: Option<Element<_>> = match (&app.cam_frame, &app.cv_frame) {
         (Some(cam), Some(cv)) => Some(
             stack![
@@ -158,20 +176,20 @@ pub fn view(app: &App) -> Element<'_, Message> {
             // Floating chips: angle (top-left) and tracking state (top-right).
             let overlay = container(
                 row![
-                    angle_chip(app),
+                    angle_chip(app, scale),
                     Space::new().width(Fill),
-                    rec_chip(app),
+                    rec_chip(app, scale),
                 ]
                 .width(Fill),
             )
-            .padding(14)
+            .padding(scale.pad_all(14.0))
             .width(Fill)
             .height(Fill)
             .align_y(Alignment::Start);
 
             stack![feed, overlay].into()
         }
-        None => idle_card(),
+        None => idle_card(scale),
     };
 
     // "Clear but firm": the feed border picks up red when posture is bad.

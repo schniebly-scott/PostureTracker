@@ -3,6 +3,7 @@ use iced::widget::{column, container, row, stack, text, tooltip};
 use iced::{Alignment, Background, Element, Length, Length::Fill};
 
 use crate::app::components::ui;
+use crate::app::components::ui::Scale;
 use crate::app::theme::{ELEV, LINE, T1};
 use crate::app::{App, CalibrationState, InferenceState, Message, RunMode};
 
@@ -12,8 +13,8 @@ use crate::app::{App, CalibrationState, InferenceState, Message, RunMode};
 const PANEL_HEIGHT: f32 = 210.0;
 
 /// A button label: a leading glyph plus text, sized for the button system.
-fn btn_label<'a>(glyph: &'a str, label: &'a str) -> Element<'a, Message> {
-    glyph_label(glyph, 14, label)
+fn btn_label<'a>(glyph: &'a str, label: &'a str, scale: Scale) -> Element<'a, Message> {
+    glyph_label(glyph, 14.0, label, scale)
 }
 
 /// Like [`btn_label`] but with an explicit glyph size — used for the icon
@@ -24,39 +25,46 @@ fn btn_label<'a>(glyph: &'a str, label: &'a str) -> Element<'a, Message> {
 /// fixed line height so the label's vertical extent doesn't shift between the
 /// icon and the Inter label, keeping every button the same height. The whole
 /// label is centered horizontally for a balanced full-width button.
-fn glyph_label<'a>(glyph: &'a str, glyph_size: u16, label: &'a str) -> Element<'a, Message> {
-    let line = text::LineHeight::Absolute(20.0.into());
+fn glyph_label<'a>(
+    glyph: &'a str,
+    glyph_size: f32,
+    label: &'a str,
+    scale: Scale,
+) -> Element<'a, Message> {
+    let line = text::LineHeight::Absolute(scale.px(20.0).into());
     container(
         row![
-            ui::icon(glyph, glyph_size).line_height(line),
+            ui::icon(glyph, scale.px(glyph_size)).line_height(line),
             text(label)
-                .size(14)
+                .size(scale.text(14.0))
                 .font(ui::semibold())
                 .line_height(line),
         ]
-        .spacing(9)
+        .spacing(scale.px(9.0))
         .align_y(Alignment::Center),
     )
     .center_x(Fill)
     .into()
 }
 
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &App, scale: Scale) -> Element<'_, Message> {
     let content = if app.is_background_mode() {
         column![
-            ui::micro_label("Session"),
-            ui::danger_button(btn_label(ui::glyph::STOP, "Stop Tracking"))
+            ui::micro_label("Session", scale),
+            ui::danger_button(btn_label(ui::glyph::STOP, "Stop Tracking", scale), scale)
                 .width(Fill)
                 .on_press(Message::StopBackgroundPressed),
         ]
-        .spacing(12)
+        .spacing(scale.px(12.0))
     } else {
         // Slot 1 — the primary session action.
         let test_button = match app.inference_state {
-            InferenceState::Running => ui::danger_button(btn_label(ui::glyph::STOP, "Stop Test"))
-                .on_press(Message::StopInferencePressed),
+            InferenceState::Running => {
+                ui::danger_button(btn_label(ui::glyph::STOP, "Stop Test", scale), scale)
+                    .on_press(Message::StopInferencePressed)
+            }
             InferenceState::Stopped | InferenceState::Unloaded => {
-                ui::secondary_button(btn_label(ui::glyph::PLAY, "Test Posture"))
+                ui::secondary_button(btn_label(ui::glyph::PLAY, "Test Posture", scale), scale)
                     .on_press(Message::TestPosturePressed)
             }
         };
@@ -71,25 +79,33 @@ pub fn view(app: &App) -> Element<'_, Message> {
             == InferenceState::Running
         {
             match &app.calibration_state {
-                CalibrationState::Idle => ui::ghost_button(btn_label(ui::glyph::TARGET, calibrate_label))
-                    .width(Fill)
-                    .on_press(Message::CalibratePressed)
-                    .into(),
+                CalibrationState::Idle => {
+                    ui::ghost_button(btn_label(ui::glyph::TARGET, calibrate_label, scale), scale)
+                        .width(Fill)
+                        .on_press(Message::CalibratePressed)
+                        .into()
+                }
                 CalibrationState::Countdown(n) => ui::disabled_button(
                     text(format!("Starting in {n}\u{2026}"))
-                        .size(14)
+                        .size(scale.text(14.0))
                         .font(ui::semibold())
                         .into(),
+                    scale,
                 )
                 .width(Fill)
                 .into(),
                 CalibrationState::Sampling { .. } => ui::disabled_button(
-                    text("Sampling\u{2026}").size(14).font(ui::semibold()).into(),
+                    text("Sampling\u{2026}")
+                        .size(scale.text(14.0))
+                        .font(ui::semibold())
+                        .into(),
+                    scale,
                 )
                 .width(Fill)
                 .into(),
                 CalibrationState::Failed(msg) => ui::disabled_button(
-                    text(format!("Failed: {msg}")).size(13).into(),
+                    text(format!("Failed: {msg}")).size(scale.text(13.0)).into(),
+                    scale,
                 )
                 .width(Fill)
                 .into(),
@@ -97,15 +113,21 @@ pub fn view(app: &App) -> Element<'_, Message> {
         } else {
             // No test running — show the calibrate button greyed out (no on_press)
             // with a tooltip on hover explaining why it can't be used yet.
-            let btn = ui::disabled_button(btn_label(ui::glyph::TARGET, calibrate_label)).width(Fill);
+            let btn =
+                ui::disabled_button(btn_label(ui::glyph::TARGET, calibrate_label, scale), scale)
+                    .width(Fill);
             tooltip(
                 btn,
-                container(text("Start a test to calibrate your baseline").size(13).color(T1))
-                    .style(ui::tile_style)
-                    .padding([6, 10]),
+                container(
+                    text("Start a test to calibrate your baseline")
+                        .size(scale.text(13.0))
+                        .color(T1),
+                )
+                .style(ui::tile_style)
+                .padding(scale.pad(6.0, 10.0)),
                 tooltip::Position::Top,
             )
-            .gap(6)
+            .gap(scale.px(6.0))
             .into()
         };
 
@@ -120,16 +142,18 @@ pub fn view(app: &App) -> Element<'_, Message> {
                         "Foreground",
                         app.session_start_mode == RunMode::Foreground,
                         Message::SessionModeSelected(RunMode::Foreground),
+                        scale,
                     ),
                     ui::seg_button(
                         "Background",
                         app.session_start_mode == RunMode::Background,
                         Message::SessionModeSelected(RunMode::Background),
+                        scale,
                     ),
                 ]
-                .spacing(2),
+                .spacing(scale.px(2.0)),
             )
-            .padding(3)
+            .padding(scale.pad_all(3.0))
             .style(|_| container::Style {
                 background: Some(Background::Color(ELEV)),
                 border: Border {
@@ -149,19 +173,19 @@ pub fn view(app: &App) -> Element<'_, Message> {
             Some(
                 row![
                     toggle,
-                    ui::primary_button(btn_label(ui::glyph::PLAY, "Start Session"))
+                    ui::primary_button(btn_label(ui::glyph::PLAY, "Start Session", scale), scale)
                         .width(Fill)
                         .on_press(start_msg),
                 ]
-                .spacing(10)
+                .spacing(scale.px(10.0))
                 .align_y(Alignment::Center),
             )
         } else {
             None
         };
 
-        let mut col = column![ui::micro_label("Session")]
-            .spacing(10)
+        let mut col = column![ui::micro_label("Session", scale)]
+            .spacing(scale.px(10.0))
             .height(Fill);
 
         // Top row — the two start buttons, when available.
@@ -180,27 +204,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let panel = container(content)
         .style(ui::panel_style)
-        .padding(16)
+        .padding(scale.pad_all(16.0))
         // Fixed height so the panel reserves room for the calibrate / start
         // buttons that appear mid-session, keeping the layout stable.
-        .height(Length::Fixed(PANEL_HEIGHT))
+        .height(Length::Fixed(scale.px(PANEL_HEIGHT)))
         .width(Fill);
 
     // Settings gear hovers in the panel's top-right corner.
-    let gear = 
-                container(tooltip(ui::icon_button(ui::glyph::GEAR, 20).on_press(Message::OpenSettingsPressed),
-                container(text("Settings").size(15).color(T1))
+    let gear =
+                container(tooltip(ui::icon_button(ui::glyph::GEAR, 20.0, scale).on_press(Message::OpenSettingsPressed),
+                container(text("Settings").size(scale.text(15.0)).color(T1))
                     .style(ui::tile_style)
-                    .padding([3, 10]),
+                    .padding(scale.pad(3.0, 10.0)),
                 tooltip::Position::Bottom,
             )
-            .gap(2))
+            .gap(scale.px(2.0)))
         .align_x(Alignment::End)
         .align_y(Alignment::Start)
         .width(Fill)
-        .height(Length::Fixed(PANEL_HEIGHT))
-        .padding(5);
-    
+        .height(Length::Fixed(scale.px(PANEL_HEIGHT)))
+        .padding(scale.pad_all(5.0));
+
 
     stack![panel, gear].into()
 }

@@ -9,7 +9,7 @@ use crate::config::{config_path, Config, PostureConfig};
 use crate::cv::TimeMetrics;
 use crate::metrics::MetricsStore;
 use crate::utils::ManagedService;
-use iced::widget::{column, container, image, responsive, row, scrollable};
+use iced::widget::{column, container, image, responsive, row};
 use iced::{Alignment, Element, Length, Size, Subscription, Task, Theme, keyboard, window};
 
 const CALIBRATION_COUNTDOWN_SECS: u8 = 3;
@@ -18,32 +18,24 @@ const MIN_CALIBRATION_SAMPLES: usize = 5;
 /// Floor for the alert cooldown. Below this the popup can reappear before the
 /// user has had time to correct their posture after dismissing it.
 pub const MIN_ALERT_COOLDOWN_SECS: u64 = 5;
-const MAIN_WINDOW_SIZE: Size = Size::new(1100.0, 860.0);
-/// Floor that keeps every panel reachable on small/scaled displays (e.g. a
-/// 1366×768 panel, or a 1080p screen at 150 % giving 1280×720 logical px).
-const MAIN_WINDOW_MIN_SIZE: Size = Size::new(980.0, 640.0);
+const MAIN_WINDOW_SIZE: Size = Size::new(1060.0, 900.0);
+/// Floor below which the compacted UI would get too small to read. Content
+/// always fits above it: the responsive scale shrinks every element so the
+/// design-size layout fits the viewport (see [`ui::Scale`]).
+const MAIN_WINDOW_MIN_SIZE: Size = Size::new(820.0, 560.0);
 const DASHBOARD_PADDING: f32 = 14.0;
 const DASHBOARD_SPACING: f32 = 14.0;
 /// Fixed width of the controls/metrics column. The camera panel fills the
 /// remaining width, so it (not these panels) grows when the window widens.
 const DASHBOARD_CONTROLS_WIDTH: f32 = 462.0;
-/// Natural panel heights used when the viewport is too short for the
-/// proportional dashboard. The resulting 900 px canvas scrolls instead of
-/// squeezing either row until its controls are clipped.
-const DASHBOARD_TOP_MIN_HEIGHT: f32 = 480.0;
-const DASHBOARD_STATUS_MIN_HEIGHT: f32 = 378.0;
-const DASHBOARD_MIN_CONTENT_HEIGHT: f32 = DASHBOARD_PADDING * 2.0
-    + DASHBOARD_SPACING
-    + DASHBOARD_TOP_MIN_HEIGHT
-    + DASHBOARD_STATUS_MIN_HEIGHT;
+/// The smallest viewport at which the unscaled layout fits: the old 980 px
+/// width floor, and the dashboard's ~900 px natural content height (panels +
+/// paddings + spacing). Windows at least this large render at scale 1.0;
+/// smaller ones shrink every element proportionally instead of scrolling.
+const DASHBOARD_DESIGN_WIDTH: f32 = 980.0;
+const DASHBOARD_DESIGN_HEIGHT: f32 = 900.0;
 const DEBUG_WINDOW_SIZE: Size = Size::new(720.0, 420.0);
 const ALERT_WINDOW_SIZE: Size = Size::new(1000.0, 600.0);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DashboardHeightMode {
-    Proportional,
-    Scrollable,
-}
 
 #[derive(PartialEq)]
 enum InferenceState {
@@ -321,7 +313,7 @@ impl App {
                 force_dismiss: config.background.force_dismiss,
                 calibration_state: CalibrationState::Idle,
                 metrics: MetricsStore::new(config.metrics.history_days_to_keep),
-                metrics_category: MetricsCategory::Daily,
+                metrics_category: MetricsCategory::QuickView,
                 metrics_transition: None,
                 metrics_reset_open: false,
                 view: View::Dashboard,
@@ -972,10 +964,14 @@ impl App {
 
     fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if window_id == self.main_window_id {
-            let content: Element<'_, Message> = match self.view {
-                View::Dashboard => responsive(|size| self.dashboard_view(size)).into(),
-                View::Settings => components::settings_panel::view(self),
-            };
+            let content: Element<'_, Message> = responsive(|size| {
+                let scale = dashboard_scale(size);
+                match self.view {
+                    View::Dashboard => self.dashboard_view(scale),
+                    View::Settings => components::settings_panel::view(self, scale),
+                }
+            })
+            .into();
 
             if self.camera_prompt_open {
                 iced::widget::stack![content, components::settings_panel::camera_prompt(self)]
@@ -992,55 +988,30 @@ impl App {
         }
     }
 
-    fn dashboard_view(&self, size: Size) -> Element<'_, Message> {
-        match dashboard_height_mode(size.height) {
-            DashboardHeightMode::Proportional => {
-                let body = column![
-                    self.dashboard_top_row(Length::FillPortion(7)),
-                    components::status_panel::view(self),
-                ]
-                .spacing(DASHBOARD_SPACING)
-                // Center the capped status panel so its extra width is balanced
-                // on both sides when the window is wider than the panel's cap.
-                .align_x(Alignment::Center);
+    fn dashboard_view(&self, scale: components::ui::Scale) -> Element<'_, Message> {
+        let body = column![
+            self.dashboard_top_row(scale),
+            components::status_panel::view(self, scale),
+        ]
+        .spacing(scale.px(DASHBOARD_SPACING))
+        // Center the capped status panel so its extra width is balanced
+        // on both sides when the window is wider than the panel's cap.
+        .align_x(Alignment::Center);
 
-                container(body)
-                    .padding(DASHBOARD_PADDING)
-                    .height(Length::Fill)
-                    .into()
-            }
-            DashboardHeightMode::Scrollable => {
-                let body = column![
-                    self.dashboard_top_row(Length::Fixed(DASHBOARD_TOP_MIN_HEIGHT)),
-                    components::status_panel::view_with_height(
-                        self,
-                        Length::Fixed(DASHBOARD_STATUS_MIN_HEIGHT),
-                    ),
-                ]
-                .spacing(DASHBOARD_SPACING)
-                .width(Length::Fill)
-                .align_x(Alignment::Center);
-
-                scrollable(
-                    container(body)
-                        .padding(DASHBOARD_PADDING)
-                        .width(Length::Fill),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-            }
-        }
+        container(body)
+            .padding(scale.px(DASHBOARD_PADDING))
+            .height(Length::Fill)
+            .into()
     }
 
-    fn dashboard_top_row(&self, height: Length) -> Element<'_, Message> {
+    fn dashboard_top_row(&self, scale: components::ui::Scale) -> Element<'_, Message> {
         row![
-            components::camera_panel::view(self),
+            components::camera_panel::view(self, scale),
             column![
-                components::control_panel::view(self),
-                components::metrics_panel::view(self),
+                components::control_panel::view(self, scale),
+                components::metrics_panel::view(self, scale),
             ]
-            .spacing(DASHBOARD_SPACING)
+            .spacing(scale.px(DASHBOARD_SPACING))
             // Fixed width so the controls and metrics keep a stable size; the
             // camera panel is the row's only fill child, so it absorbs all the
             // extra space when the window grows instead of letting these
@@ -1048,13 +1019,15 @@ impl App {
             // (A `max_width` on a FillPortion child is a no-op here: iced's
             // flex layout pins such a child to min == max == its portion, so
             // the cap gets clamped away.)
-            .width(Length::Fixed(DASHBOARD_CONTROLS_WIDTH)),
+            .width(Length::Fixed(scale.px(DASHBOARD_CONTROLS_WIDTH))),
         ]
-        .spacing(DASHBOARD_SPACING)
+        .spacing(scale.px(DASHBOARD_SPACING))
         // Always span the full width so centering the column (to center the
         // capped status panel below) leaves this row full-bleed.
         .width(Length::Fill)
-        .height(height)
+        // Takes the larger share of the dashboard column; the status panel
+        // below is FillPortion(5).
+        .height(Length::FillPortion(7))
         .into()
     }
 
@@ -1236,12 +1209,12 @@ fn interval_choice_from_secs(secs: u64) -> (SampleIntervalChoice, String) {
     }
 }
 
-fn dashboard_height_mode(height: f32) -> DashboardHeightMode {
-    if height < DASHBOARD_MIN_CONTENT_HEIGHT {
-        DashboardHeightMode::Scrollable
-    } else {
-        DashboardHeightMode::Proportional
-    }
+/// The shrink-only UI scale for a main-window viewport of `size`: 1.0 whenever
+/// the unscaled layout fits, otherwise just small enough that it does.
+fn dashboard_scale(size: Size) -> components::ui::Scale {
+    components::ui::Scale::new(
+        (size.width / DASHBOARD_DESIGN_WIDTH).min(size.height / DASHBOARD_DESIGN_HEIGHT),
+    )
 }
 
 #[cfg(test)]
@@ -1267,19 +1240,29 @@ mod tests {
     }
 
     #[test]
-    fn short_dashboard_viewports_scroll_instead_of_clipping() {
-        assert_eq!(
-            dashboard_height_mode(MAIN_WINDOW_MIN_SIZE.height),
-            DashboardHeightMode::Scrollable
-        );
-        assert_eq!(
-            dashboard_height_mode(DASHBOARD_MIN_CONTENT_HEIGHT - 1.0),
-            DashboardHeightMode::Scrollable
-        );
-        assert_eq!(
-            dashboard_height_mode(DASHBOARD_MIN_CONTENT_HEIGHT),
-            DashboardHeightMode::Proportional
-        );
+    fn dashboard_scale_is_identity_at_design_size_and_above() {
+        let design = Size::new(DASHBOARD_DESIGN_WIDTH, DASHBOARD_DESIGN_HEIGHT);
+        assert_eq!(dashboard_scale(design).factor(), 1.0);
+        assert_eq!(dashboard_scale(Size::new(2560.0, 1440.0)).factor(), 1.0);
+    }
+
+    #[test]
+    fn dashboard_scale_fits_content_at_min_window_size() {
+        // The scaled design content must fit the minimum window on both axes;
+        // otherwise something would clip (scrolling no longer exists).
+        let scale = dashboard_scale(MAIN_WINDOW_MIN_SIZE);
+        assert!(scale.px(DASHBOARD_DESIGN_WIDTH) <= MAIN_WINDOW_MIN_SIZE.width + 0.5);
+        assert!(scale.px(DASHBOARD_DESIGN_HEIGHT) <= MAIN_WINDOW_MIN_SIZE.height + 0.5);
+        // And the min window must sit above the defensive scale floor, or the
+        // clamp would defeat the fit guarantee.
+        assert!(scale.factor() > components::ui::Scale::MIN);
+    }
+
+    #[test]
+    fn dashboard_scale_clamps_to_defensive_floor() {
+        // WMs that ignore min_size can hand us absurdly small viewports.
+        let scale = dashboard_scale(Size::new(100.0, 80.0));
+        assert_eq!(scale.factor(), components::ui::Scale::MIN);
     }
 
     #[test]
