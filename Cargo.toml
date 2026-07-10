@@ -1,6 +1,6 @@
 [package]
 name = "posturetracker"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 description = "Watches your posture through the webcam and alerts you when you slouch"
 
