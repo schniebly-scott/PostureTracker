@@ -3,43 +3,49 @@ use iced::{Alignment, Background, Color, Element, Length};
 use iced::Length::Fill;
 
 use crate::app::components::ui;
+use crate::app::components::ui::Scale;
 use crate::app::theme::{AMBER, T2};
 use crate::app::{App, Message, MIN_ALERT_COOLDOWN_SECS};
 use crate::camera::CaptureResolution;
 
 /// A semibold text label sized for the kit button system.
-fn btn_label(label: &str) -> Element<'_, Message> {
-    text(label).size(14).font(ui::semibold()).into()
+fn btn_label(label: &str, scale: Scale) -> Element<'_, Message> {
+    text(label).size(scale.text(14.0)).font(ui::semibold()).into()
 }
 
 /// Wrap a section's body in a `panel_style` card led by a `micro_label`
 /// header — the same rhythm as the dashboard columns.
-fn section<'a>(title: &'static str, body: Element<'a, Message>) -> Element<'a, Message> {
-    container(column![ui::micro_label(title), body].spacing(12))
+fn section<'a>(
+    title: &'static str,
+    body: Element<'a, Message>,
+    scale: Scale,
+) -> Element<'a, Message> {
+    container(column![ui::micro_label(title, scale), body].spacing(scale.px(12.0)))
         .style(ui::panel_style)
-        .padding(16)
+        .padding(scale.pad_all(16.0))
         .width(Fill)
         .into()
 }
 
 /// Full-page Settings view shown in place of the dashboard.
-pub fn view(app: &App) -> Element<'_, Message> {
+pub fn view(app: &App, scale: Scale) -> Element<'_, Message> {
     let header = row![
-        text("Settings").size(24),
+        text("Settings").size(scale.text(24.0)),
         Space::new().width(Fill),
-        ui::secondary_button(btn_label("Back")).on_press(Message::CloseSettingsPressed),
+        ui::secondary_button(btn_label("Back", scale), scale)
+            .on_press(Message::CloseSettingsPressed),
     ]
     .align_y(Alignment::Center)
     .width(Fill);
 
     let content = column![
         header,
-        section("Camera", camera_selector(app)),
-        section("Posture Alerts", cooldown_field(app)),
-        section("Window", window_actions(app)),
+        section("Camera", camera_selector(app, scale), scale),
+        section("Posture Alerts", cooldown_field(app, scale), scale),
+        section("Window", window_actions(app, scale), scale),
     ]
-    .spacing(14)
-    .padding(24)
+    .spacing(scale.px(14.0))
+    .padding(scale.pad_all(24.0))
     .width(Fill)
     .height(Fill);
 
@@ -49,9 +55,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 /// The camera dropdown (or a "no cameras" notice) at the given width.
-fn camera_pick_list(app: &App, width: Length) -> Element<'_, Message> {
+fn camera_pick_list(app: &App, width: Length, scale: Scale) -> Element<'_, Message> {
     if app.available_cameras.is_empty() {
-        return text("No cameras found").size(14).color(T2).into();
+        return text("No cameras found").size(scale.text(14.0)).color(T2).into();
     }
 
     let selected = app
@@ -66,41 +72,42 @@ fn camera_pick_list(app: &App, width: Length) -> Element<'_, Message> {
         Message::CameraSelected,
     )
     .placeholder("Select a camera")
-    .text_size(14)
+    .text_size(scale.text(14.0))
     .width(width)
-    .padding([8, 12])
+    .padding(scale.pad(8.0, 12.0))
     .into()
 }
 
 /// Settings-page camera row: device dropdown plus a refresh button, followed by
 /// the capture-resolution cap.
-fn camera_selector(app: &App) -> Element<'_, Message> {
+fn camera_selector(app: &App, scale: Scale) -> Element<'_, Message> {
     let device_row = row![
-        camera_pick_list(app, Fill),
-        ui::secondary_button(btn_label("Refresh")).on_press(Message::RefreshCamerasPressed),
+        camera_pick_list(app, Fill, scale),
+        ui::secondary_button(btn_label("Refresh", scale), scale)
+            .on_press(Message::RefreshCamerasPressed),
     ]
-    .spacing(10)
+    .spacing(scale.px(10.0))
     .align_y(Alignment::Center);
 
     let resolution = column![
-        text("Resolution").size(13).color(T2),
-        resolution_pick_list(app),
+        text("Resolution").size(scale.text(13.0)).color(T2),
+        resolution_pick_list(app, scale),
         text(
             "Caps the processed and displayed frame size (aspect ratio is preserved). \
              Smaller sizes use less CPU/GPU and can smooth out a stuttering feed."
         )
-        .size(12)
+        .size(scale.text(12.0))
         .color(T2),
     ]
-    .spacing(6);
+    .spacing(scale.px(6.0));
 
-    column![device_row, resolution].spacing(14).into()
+    column![device_row, resolution].spacing(scale.px(14.0)).into()
 }
 
 /// The capture-resolution cap dropdown. The stored width/height always match one
 /// of `CaptureResolution::OPTIONS` (the user can only pick from this list), so a
 /// selection is highlighted rather than falling back to the placeholder.
-fn resolution_pick_list(app: &App) -> Element<'_, Message> {
+fn resolution_pick_list(app: &App, scale: Scale) -> Element<'_, Message> {
     let selected = CaptureResolution::OPTIONS.iter().copied().find(|r| {
         r.width == app.config.camera.capture_width && r.height == app.config.camera.capture_height
     });
@@ -111,62 +118,62 @@ fn resolution_pick_list(app: &App) -> Element<'_, Message> {
         Message::CaptureResolutionSelected,
     )
     .placeholder("Select a resolution")
-    .text_size(14)
+    .text_size(scale.text(14.0))
     .width(Fill)
-    .padding([8, 12])
+    .padding(scale.pad(8.0, 12.0))
     .into()
 }
 
 /// Buttons relocated from the old control-panel dropdown.
-fn window_actions(app: &App) -> Element<'_, Message> {
+fn window_actions(app: &App, scale: Scale) -> Element<'_, Message> {
     // Keep the row present but disabled while the debug window is open, so the
     // buttons below it don't shift.
     let debug_btn = if app.has_debug_window() {
-        ui::disabled_button(btn_label("Debug Window")).width(Fill)
+        ui::disabled_button(btn_label("Debug Window", scale), scale).width(Fill)
     } else {
-        ui::secondary_button(btn_label("Debug Window"))
+        ui::secondary_button(btn_label("Debug Window", scale), scale)
             .width(Fill)
             .on_press(Message::OpenDebugWindowPressed)
     };
 
     column![
         debug_btn,
-        ui::secondary_button(btn_label("Hide To Tray / Minimize"))
+        ui::secondary_button(btn_label("Hide To Tray / Minimize", scale), scale)
             .width(Fill)
             .on_press(Message::HideMainWindowPressed),
-        ui::danger_button(btn_label("Quit App"))
+        ui::danger_button(btn_label("Quit App", scale), scale)
             .width(Fill)
             .on_press(Message::QuitRequested),
     ]
-    .spacing(8)
+    .spacing(scale.px(8.0))
     .into()
 }
 
 /// Settings-page control for the alert cooldown — the minimum time before the
 /// bad-posture popup can reappear after it's dismissed.
-fn cooldown_field(app: &App) -> Element<'_, Message> {
+fn cooldown_field(app: &App, scale: Scale) -> Element<'_, Message> {
     let input = row![
-        text_input("60", &app.cooldown_input)
+        text_input("5", &app.cooldown_input)
             .on_input(Message::CooldownInputChanged)
             .on_submit(Message::CommitConfig)
-            .size(14)
-            .width(Length::Fixed(80.0))
-            .padding([8, 12]),
-        text("seconds").size(14),
+            .size(scale.text(14.0))
+            .width(Length::Fixed(scale.px(80.0)))
+            .padding(scale.pad(8.0, 12.0)),
+        text("seconds").size(scale.text(14.0)),
     ]
-    .spacing(10)
+    .spacing(scale.px(10.0))
     .align_y(Alignment::Center);
 
     let mut col = column![
         text("Minimum time before the alert can reappear after it's dismissed")
-            .size(13)
+            .size(scale.text(13.0))
             .color(T2),
         input,
     ]
-    .spacing(8);
+    .spacing(scale.px(8.0));
 
     if let Some(warning) = cooldown_warning(&app.cooldown_input) {
-        col = col.push(text(warning).size(13).color(AMBER).width(Fill));
+        col = col.push(text(warning).size(scale.text(13.0)).color(AMBER).width(Fill));
     }
 
     col.into()
@@ -187,21 +194,22 @@ fn cooldown_warning(input: &str) -> Option<String> {
 }
 
 /// Modal overlay shown at first run when no camera has been configured yet.
+/// Renders unscaled: its small centered card fits even the minimum window.
 pub fn camera_prompt(app: &App) -> Element<'_, Message> {
     // The page's one CTA — primary when a camera is picked, visibly disabled
     // until then.
     let confirm = if app.config.camera.device.is_some() {
-        ui::primary_button(btn_label("Confirm"))
+        ui::primary_button(btn_label("Confirm", Scale::ONE), Scale::ONE)
             .width(Fill)
             .on_press(Message::CameraPromptConfirmed)
     } else {
-        ui::disabled_button(btn_label("Confirm")).width(Fill)
+        ui::disabled_button(btn_label("Confirm", Scale::ONE), Scale::ONE).width(Fill)
     };
 
     let card = container(
         column![
             text("Choose a camera").size(16).font(ui::semibold()),
-            camera_pick_list(app, Fill),
+            camera_pick_list(app, Fill, Scale::ONE),
             confirm,
         ]
         .spacing(14),

@@ -7,7 +7,7 @@
 use iced::border::Border;
 use iced::font::Weight;
 use iced::widget::{button, container, text};
-use iced::{Background, Color, Element, Font};
+use iced::{Background, Color, Element, Font, Padding};
 
 use crate::app::Message;
 use crate::app::theme::{
@@ -43,6 +43,63 @@ pub const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Se
 pub const INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.ttf");
 pub const JETBRAINS_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 pub const ICON_FONT: &[u8] = include_bytes!("../../../assets/fonts/PostureIcons.ttf");
+
+// ---- Responsive scale ----
+
+/// A shrink-only scale factor threaded through the dashboard views so every
+/// element (text, padding, spacing, fixed dimensions) compacts proportionally
+/// when the window is smaller than the size the layout was designed for,
+/// instead of scrolling or clipping. At `1.0` (any window that fits the design
+/// size) every helper is the identity, so full-size rendering is unchanged.
+///
+/// Hairline borders and corner radii are deliberately *not* scaled — a 1px
+/// border should stay 1px at every window size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scale(f32);
+
+impl Scale {
+    /// Defensive floor for window managers that ignore the window min-size;
+    /// at supported window sizes the computed scale never gets this small.
+    pub const MIN: f32 = 0.5;
+    pub const ONE: Self = Scale(1.0);
+
+    pub fn new(factor: f32) -> Self {
+        Scale(factor.clamp(Self::MIN, 1.0))
+    }
+
+    pub fn factor(self) -> f32 {
+        self.0
+    }
+
+    /// A scaled dimension (width, height, spacing, icon size, …).
+    pub fn px(self, base: f32) -> f32 {
+        base * self.0
+    }
+
+    /// A scaled font size. Same math as [`Scale::px`]; the name keeps call
+    /// sites self-describing.
+    pub fn text(self, base: f32) -> f32 {
+        base * self.0
+    }
+
+    /// Scaled `[vertical, horizontal]` padding.
+    pub fn pad(self, v: f32, h: f32) -> Padding {
+        Padding::from([v * self.0, h * self.0])
+    }
+
+    /// Scaled uniform padding.
+    pub fn pad_all(self, p: f32) -> Padding {
+        (p * self.0).into()
+    }
+
+    /// Compose with a local shrink-to-fit factor (e.g. the metrics body
+    /// squeezing its cards into the height it was given). `fit` never grows
+    /// the scale, and the result may drop below [`Scale::MIN`] — fitting wins
+    /// over the defensive floor.
+    pub fn and(self, fit: f32) -> Self {
+        Scale(self.0 * fit.min(1.0))
+    }
+}
 
 pub fn semibold() -> Font {
     Font {
@@ -92,9 +149,9 @@ pub mod glyph {
 /// An icon glyph rendered in the bundled [`ICONS`] font at `size`. Set the
 /// color on the returned text as usual. Always build icons through this helper
 /// (or [`icon_button`]) rather than putting a glyph in a plain `text`.
-pub fn icon(glyph: &str, size: u16) -> text::Text<'_> {
+pub fn icon(glyph: &str, size: f32) -> text::Text<'_> {
     text(glyph)
-        .size(size as f32)
+        .size(size)
         .font(ICONS)
         .wrapping(text::Wrapping::None)
 }
@@ -119,17 +176,17 @@ pub fn mix(a: Color, b: Color, amount: f32) -> Color {
 // ---- Type helpers ----
 
 /// Uppercase, letter-spaced tertiary label that leads a section.
-pub fn micro_label(label: &str) -> text::Text<'_> {
+pub fn micro_label(label: &str, scale: Scale) -> text::Text<'_> {
     text(label.to_uppercase())
-        .size(12)
+        .size(scale.text(12.0))
         .font(semibold())
         .color(T3)
 }
 
 /// Monospace numeric value.
-pub fn value(s: impl text::IntoFragment<'static>, size: u16, color: Color) -> text::Text<'static> {
+pub fn value(s: impl text::IntoFragment<'static>, size: f32, color: Color) -> text::Text<'static> {
     text(s)
-        .size(size as f32)
+        .size(size)
         .font(mono())
         .color(color)
         .wrapping(text::Wrapping::None)
@@ -187,9 +244,9 @@ pub fn tile_style(_theme: &iced::Theme) -> container::Style {
 // ---- Button system ----
 
 /// Solid green call-to-action.
-pub fn primary_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
+pub fn primary_button(label: Element<'_, Message>, scale: Scale) -> button::Button<'_, Message> {
     button(label)
-        .padding([12, 12])
+        .padding(scale.pad(12.0, 12.0))
         .style(|_theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => mix(GREEN, Color::WHITE, 0.12),
@@ -205,9 +262,9 @@ pub fn primary_button(label: Element<'_, Message>) -> button::Button<'_, Message
 }
 
 /// Tinted destructive action.
-pub fn danger_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
+pub fn danger_button(label: Element<'_, Message>, scale: Scale) -> button::Button<'_, Message> {
     button(label)
-        .padding([12, 12])
+        .padding(scale.pad(12.0, 12.0))
         .style(|_theme, status| {
             let base = mix(PANEL, RED, 0.16);
             let bg = match status {
@@ -228,9 +285,9 @@ pub fn danger_button(label: Element<'_, Message>) -> button::Button<'_, Message>
 }
 
 /// Neutral filled button.
-pub fn secondary_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
+pub fn secondary_button(label: Element<'_, Message>, scale: Scale) -> button::Button<'_, Message> {
     button(label)
-        .padding([12, 12])
+        .padding(scale.pad(12.0, 12.0))
         .style(|_theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => HOVER,
@@ -254,9 +311,9 @@ pub fn secondary_button(label: Element<'_, Message>) -> button::Button<'_, Messa
 }
 
 /// Quiet outlined button (used for Re-calibrate during a session).
-pub fn ghost_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
+pub fn ghost_button(label: Element<'_, Message>, scale: Scale) -> button::Button<'_, Message> {
     button(label)
-        .padding([12, 15])
+        .padding(scale.pad(12.0, 15.0))
         .style(|_theme, status| {
             let (bg, text_color) = match status {
                 button::Status::Hovered | button::Status::Pressed => {
@@ -278,8 +335,8 @@ pub fn ghost_button(label: Element<'_, Message>) -> button::Button<'_, Message> 
 }
 
 /// Inert button used for in-progress states (no `on_press`).
-pub fn disabled_button(label: Element<'_, Message>) -> button::Button<'_, Message> {
-    button(label).padding([12, 15]).style(|_theme, _status| {
+pub fn disabled_button(label: Element<'_, Message>, scale: Scale) -> button::Button<'_, Message> {
+    button(label).padding(scale.pad(12.0, 15.0)).style(|_theme, _status| {
         button::Style {
             background: Some(Background::Color(with_alpha(ELEV, 0.6))),
             text_color: T3,
@@ -295,14 +352,19 @@ pub fn disabled_button(label: Element<'_, Message>) -> button::Button<'_, Messag
 
 /// One segment of a segmented pill control. `selected` paints the active fill;
 /// otherwise the segment is transparent and only brightens its text on hover.
-pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'_, Message> {
+pub fn seg_button(
+    label: &str,
+    selected: bool,
+    msg: Message,
+    scale: Scale,
+) -> button::Button<'_, Message> {
     button(
         text(label)
-            .size(13)
+            .size(scale.text(13.0))
             .font(semibold())
             .wrapping(text::Wrapping::None),
     )
-    .padding([7, 10])
+    .padding(scale.pad(7.0, 10.0))
     .on_press(msg)
     .style(move |_theme, status| {
         let (bg, tc) = if selected {
@@ -323,9 +385,9 @@ pub fn seg_button(label: &str, selected: bool, msg: Message) -> button::Button<'
 }
 
 /// Quiet square icon button for toolbars / titlebar.
-pub fn icon_button(glyph: &'static str, size: u16) -> button::Button<'static, Message> {
-    button(icon(glyph, size).color(T3))
-        .padding([6, 8])
+pub fn icon_button(glyph: &'static str, size: f32, scale: Scale) -> button::Button<'static, Message> {
+    button(icon(glyph, scale.px(size)).color(T3))
+        .padding(scale.pad(6.0, 8.0))
         .style(|_theme, status| {
             let (bg, text_color) = match status {
                 button::Status::Hovered | button::Status::Pressed => {
